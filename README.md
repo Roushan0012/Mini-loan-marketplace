@@ -1,22 +1,25 @@
 # Mini Loan Marketplace
 
-A full-stack training project simulating a consumer credit marketplace where borrowers can request loan terms, receive competitive pre-qualified offers from multiple simulated lending partners, and compare loan options.
+A full-stack training project simulating a consumer credit marketplace where borrowers can request loan terms, receive competitive pre-qualified offers from multiple simulated lending partners, and compare loan options in alignment with Module 16 capstone requirements.
 
 ---
 
 ## 📖 Project Purpose
 
-The primary goal of the **Mini Loan Marketplace** is to provide a clean, modern, and extensible reference architecture for a multi-tenant or multi-lender credit platform.
+The primary goal of the **Mini Loan Marketplace** is to provide a clean, modern, and extensible reference architecture for a multi-lender credit platform.
 
 Key goals:
-- Demonstrate modern API design using **FastAPI** with structured validation and dependency injection.
-- Showcase a modular **React + TypeScript** frontend architecture for multi-step applications and financial comparison views.
+- Demonstrate modern API design using **FastAPI** with structured validation, service layers, and dependency injection.
+- Showcase a modular **React + TypeScript** frontend architecture supporting role-based access for customers, callers, and administrators.
 - Implement robust relational persistence using **PostgreSQL**, **SQLAlchemy (2.0)**, and **Alembic**.
 - Emulate external financial partner integrations using deterministic mock lender adapters without reliance on live financial networks or third-party credentials.
 
 > [!IMPORTANT]
-> **Fictional Training Project**:
-> All borrowers, credit profiles, underwriting calculations, and lending institutions in this project are strictly fictional. The project does not connect to real credit bureaus, banking rails, payment processors, or SMS/OTP gateways.
+> **Fictional Training Project & Safety Guardrails**:
+> - All borrowers, credit profiles, underwriting calculations, and lending institutions in this project are strictly fictional.
+> - The project does **not** connect to real lenders, credit bureaus, banking rails, payment processors, or SMS/OTP gateways.
+> - The application does **not** grant or claim actual loan approval; all outcomes are educational simulations.
+> - Follows Module 16 capstone specifications directly without extraneous production architecture inventions.
 
 ---
 
@@ -33,27 +36,86 @@ Key goals:
 
 ---
 
-## 👥 User Roles & Personas
+## 👥 Application User Roles
 
-- **Borrower (Applicant)**: Explores loan products, completes credit inquiries, and compares personalized offers.
-- **Marketplace Administrator**: Monitors application queues, inspects conversion metrics, and configures mock lender simulation parameters.
-- **Mock Lending Partners**: Fictional financial institutions (*Apex Financial*, *Horizon Credit*, *Sterling Loans*) with differing risk profiles and APR tiers.
+The application strictly defines **three** application user roles:
 
-For detailed workflow steps and state lifecycle diagrams, see [docs/workflow.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/workflow.md).
+1. **Customer**:
+   - Creates a fictional loan application.
+   - Gives or revokes purpose-specific demo consent.
+   - Views eligible and nonmatching lender results.
+   - Compares offers (APR, amount, term, instalment, and mock KFS link).
+   - Selects an offer.
+   - Tracks application status.
+
+2. **Caller**:
+   - Can view only mock leads assigned to them.
+   - Cannot access other callers' leads (strict caller isolation).
+   - Cannot access admin functionality or system configuration.
+
+3. **Admin**:
+   - Views aggregate application funnel metrics.
+   - Views application processing delays.
+   - Views system error events.
+   - Must **not** receive sensitive customer records in dashboard responses (privacy-preserving analytics).
+
+> [!NOTE]
+> **External Simulated Integrations**:
+> Mock lenders (*Apex Financial*, *Horizon Credit*, *Sterling Loans*) are **external simulated integrations**, not application user roles. They communicate with the backend exclusively via isolated adapters and simulated callbacks.
+
+---
+
+## 🔄 Customer Workflow Sequence
+
+The customer application journey follows an explicit 13-step progression:
+
+1. **Create a draft application**: Initialize a new loan session.
+2. **Enter profile details**: Provide age, monthly income, work type, and requested loan amount.
+3. **Display demo consent**: Present purpose-specific demo consent notice.
+4. **Record consent metadata**: Persist notice version, timestamp, and consent status (`GRANTED`, `REVOKED`, `PENDING`).
+5. **Allow consent revocation**: Allow customer to revoke demo consent at any point prior to submission.
+6. **Check active consent**: Verify active, non-revoked consent before triggering matching logic.
+7. **Run three mock lender policies**: Evaluate applicant profile against *Apex Financial*, *Horizon Credit*, and *Sterling Loans* underwriting rules.
+8. **Record policy audit records**: Store policy versions along with eligibility decisions and structured exclusion reasons.
+9. **Display matching results**: Show eligible offers alongside transparent names of nonmatching lenders.
+10. **Display terms**: Render APR, loan amount, tenure/term, monthly instalment, and mock KFS (Key Fact Statement) link.
+11. **Select an offer**: Customer selects their preferred loan product.
+12. **Prevent duplicate submissions**: Require a unique submission key (idempotency key) for final submission.
+13. **Track lifecycle**: Monitor mock lender responses, webhook receipts, and final application status.
+
+For full sequence flowcharts, state transitions, and detailed descriptions, refer to [docs/workflow.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/workflow.md).
+
+---
+
+## ⚠️ Failure Scenarios & Safe Backend Handling
+
+The backend architecture is engineered to handle failure states safely and deterministically:
+
+- **Success**: Lender processes and returns approval terms; application status cleanly moves to completed.
+- **Decline**: Policy or underwriting rejection logged with explicit exclusion reasons without breaking application flow.
+- **Timeout**: Gracefully handles simulated partner latency breaches, records timeout error events, and aggregates available partner offers.
+- **Duplicate Webhook**: Enforces idempotency via submission keys and event IDs to avoid duplicate mutations.
+- **Late Webhook**: Webhooks received after terminal states are safely audited without mutating application state.
+- **Out-of-Order Status Event**: Monotonic state transition validations prevent out-of-sequence updates (e.g., disbursal events before review).
 
 ---
 
 ## 🏛️ System Architecture
 
-The application is structured into decoupled frontend, backend, database, and mock integration layers:
+The application is structured around a decoupled multi-layer architecture:
 
-- **Client Layer**: Single-page application built with React and TypeScript.
-- **API Layer**: FastAPI application providing structured REST endpoints at `/api/v1`.
-- **Domain & Service Layer**: Encapsulates business logic, underwriting rule checks, and mock lender orchestration.
+- **Client Interfaces**: Role-specific SPAs for Customer, Caller (assigned leads), and Admin (aggregate metrics).
+- **FastAPI Application**: High-performance API layer with route controllers and authorization guards.
+- **Core Services**:
+  - `Application Service`: Manages drafts, profile data, and state transitions.
+  - `Consent Service`: Tracks notice versions, timestamps, active consent checks, and revocations.
+  - `Matching Service`: Runs policy evaluations across three mock lenders and tracks exclusion reasons.
+  - `Offer Service`: Computes APR, instalments, links mock KFS documents, and manages offer selection.
+  - `Submission Service`: Manages unique submission keys, dispatches lender requests, and enforces idempotency.
+- **Mock Lender Adapters**: Isolated simulators (*Apex Financial*, *Horizon Credit*, *Sterling Loans*).
 - **Data Layer**: Relational models in PostgreSQL managed with SQLAlchemy declarative models and Alembic migrations.
-- **Mock Integrations Layer**: Isolated provider adapters simulating lender quoting behavior.
 
-For the full architectural specification and Mermaid architecture diagrams, see [docs/architecture.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/architecture.md).
+For the architectural diagram and component details, refer to [docs/architecture.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/architecture.md).
 
 ---
 
@@ -68,15 +130,15 @@ Mini_Loan_Marketplace/
 │   │   ├── db/                         # Database connection, session lifecycle, and base models
 │   │   ├── models/                     # SQLAlchemy declarative ORM models
 │   │   ├── schemas/                    # Pydantic schemas for request validation & responses
-│   │   ├── services/                   # Core business logic and orchestration services
+│   │   ├── services/                   # Application, Consent, Matching, Offer, and Submission services
 │   │   └── integrations/
 │   │       └── mock_lenders/           # Simulated third-party lender adapters
 │   └── tests/                          # Backend test suite (Pytest & HTTPX)
 ├── frontend/
 │   └── src/
 │       ├── components/                 # Reusable UI components
-│       ├── pages/                      # Top-level view pages
-│       ├── features/                   # Domain/feature-specific components and logic
+│       ├── pages/                      # Customer, Caller, and Admin views
+│       ├── features/                   # Application flow, offer comparison, lead management
 │       ├── services/                   # API clients and HTTP integrations
 │       ├── hooks/                      # Custom reusable React hooks
 │       └── types/                      # TypeScript type definitions and API contracts
@@ -88,25 +150,6 @@ Mini_Loan_Marketplace/
 ├── .gitignore                          # Git ignore rules for Python, Node, OS, and secrets
 └── README.md                           # Project documentation
 ```
-
-### Folder Purpose Summary
-
-- `backend/app/api/v1`: Exposes versioned REST API routes for applications, offers, and mock lender interactions.
-- `backend/app/core`: Houses application settings (via Pydantic Settings) and shared utilities.
-- `backend/app/db`: Manages SQLAlchemy engine, session factories, and database lifecycle.
-- `backend/app/models`: Defines relational database tables and relationships.
-- `backend/app/schemas`: Defines request and response validation models with Pydantic.
-- `backend/app/services`: Contains the application business logic, isolated from HTTP transport details.
-- `backend/app/integrations/mock_lenders`: Provides pluggable, isolated mock lenders for loan quote generation.
-- `backend/tests`: Automated test suites using Pytest and HTTPX.
-- `frontend/src/components`: Generic, reusable UI elements (e.g., buttons, cards, layout).
-- `frontend/src/pages`: Page-level components corresponding to router endpoints.
-- `frontend/src/features`: Domain-focused components (e.g., loan inquiry form, offer comparison grid).
-- `frontend/src/services`: Client-side HTTP requests and API consumption logic.
-- `frontend/src/hooks`: Encapsulates reusable UI and asynchronous state logic.
-- `frontend/src/types`: TypeScript contracts mirroring backend API schemas.
-- `docs`: Technical documentation including architecture diagrams and user workflows.
-- `infra`: Containerization specifications and environment orchestration.
 
 ---
 

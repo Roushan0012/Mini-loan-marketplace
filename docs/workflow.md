@@ -1,90 +1,174 @@
 # Workflow & User Roles
 
-This document defines the user personas, permissions, end-to-end customer journey, and internal application lifecycle within the **Mini Loan Marketplace**.
+This document defines the application user roles, customer journey, failure scenarios, and application lifecycle for the **Mini Loan Marketplace** in alignment with the Module 16 capstone requirements.
 
 ---
 
-## 1. User Roles & Personas
+## 1. User Roles & Access Boundaries
 
-| Role | Description | Primary Permissions & Responsibilities |
-|---|---|---|
-| **Borrower (Applicant)** | A consumer exploring personal/business loan options. | - Submit loan requests with requested amount, tenure, and employment details.<br>- View aggregated and personalized loan offers.<br>- Compare EMI, interest rates, and loan terms.<br>- Select and accept an offer. |
-| **Marketplace Administrator** | Platform operator monitoring the marketplace health. | - View all loan applications and status history.<br>- Inspect mock lender response rates and average APRs.<br>- Configure mock partner rules and latency settings. |
-| **Mock Lender Partner** | Simulated financial institution (e.g., *Apex Financial*, *Horizon Credit*, *Sterling Loans*). | - Receives sanitized borrower profiles.<br>- Returns custom loan terms (interest rate, maximum approved amount, fees). |
+The application strictly defines **three** application user roles:
 
-> [!NOTE]
-> All applicant personas, lender entities, credit ratings, and transactions within this project are entirely fictional and used strictly for development and training.
+```mermaid
+flowchart LR
+    subgraph Roles ["Application User Roles"]
+        Customer["1. Customer"]
+        Caller["2. Caller"]
+        Admin["3. Admin"]
+    end
+
+    subgraph External ["External Simulated Integrations"]
+        MockLenders["Mock Lenders<br>(Simulated Third-Party Partners)"]
+    end
+
+    Customer -.->|"Interacts with"| External
+    Roles -.->|"External to app roles"| External
+```
+
+### 1.1. Customer
+- Creates a fictional loan application.
+- Gives or revokes purpose-specific demo consent.
+- Views eligible and nonmatching lender results.
+- Compares offers (APR, amount, term, instalment, and mock KFS link).
+- Selects an offer.
+- Tracks application status.
+
+### 1.2. Caller
+- Can view only mock leads assigned directly to them.
+- **Strict Isolation**: Cannot access other callers' leads.
+- **Role Boundary**: Cannot access admin functionality or system configuration.
+
+### 1.3. Admin
+- Views aggregate application funnel metrics.
+- Monitors application processing delays.
+- Inspects system error events and failure trends.
+- **Privacy Protection**: Must **not** receive sensitive customer records (PII) in dashboard responses; queries return anonymized, aggregated telemetry only.
+
+> [!IMPORTANT]
+> **External Simulated Integrations**:
+> Mock lenders (*Apex Financial*, *Horizon Credit*, *Sterling Loans*) are **external simulated integrations**, not application user roles. They interact with the system via simulated adapters and webhooks, completely outside application authentication and authorization boundaries.
 
 ---
 
-## 2. Customer Application Workflow
+## 2. Customer Workflow Sequence
 
-The end-to-end customer workflow follows a structured 5-stage progression:
+The customer journey follows a deterministic, 13-step sequence:
 
 ```mermaid
 flowchart TD
-    Step1["1. Loan Inquiry Formulation<br>(Amount, Tenure, Employment, Income)"]
-    Step2["2. Validation & Pre-qualification<br>(FastAPI Pydantic Schemas & Rules Engine)"]
-    Step3["3. Fan-out to Mock Lenders<br>(Apex Financial, Horizon Credit, Sterling Loans)"]
-    Step4["4. Offer Aggregation & Comparison<br>(Calculate EMI, APR, Sorting by Best Fit)"]
-    Step5["5. Offer Selection & Confirmation<br>(Borrower selects preferred offer)"]
+    S1["1. Create Draft Application"] --> S2["2. Enter Application Details<br>(Age, Monthly Income, Work Type, Requested Amount)"]
+    S2 --> S3["3. Display Purpose-Specific Demo Consent"]
+    S3 --> S4["4. Record Notice Version, Timestamp & Consent Status"]
+    S4 --> S5{"Consent Status?"}
 
-    Step1 --> Step2
-    Step2 --> Step3
-    Step3 --> Step4
-    Step4 --> Step5
+    S5 -- "Revoked / Denied" --> S5b["5. Consent Revocation Handled<br>(Stop Processing, No Matching)"]
+    S5 -- "Active Consent" --> S6["6. Check Active Consent Before Matching"]
+
+    S6 --> S7["7. Run Three Mock Lender Policies<br>(Apex Financial, Horizon Credit, Sterling Loans)"]
+    S7 --> S8["8. Record Policy Version & Eligibility / Exclusion Reasons"]
+    S8 --> S9["9. Display Eligible Offers & Nonmatching Lender Names"]
+    S9 --> S10["10. Display Detailed Terms<br>(APR, Amount, Term, Instalment & Mock KFS Link)"]
+    S10 --> S11["11. Customer Selects an Offer"]
+    S11 --> S12["12. Enforce Unique Submission Key<br>(Prevent Duplicate Submissions)"]
+    S12 --> S13["13. Track Mock Lender Responses & Application Status"]
 ```
 
-### Detailed Steps:
+### Detailed Sequence Steps:
 
-1. **Inquiry Formulation**:
-   - The applicant specifies loan requirements (e.g., $10,000 for 36 months) along with fictional personal and financial profile parameters.
-2. **Validation & Pre-qualification**:
-   - The backend validates data types, acceptable bounds (e.g., min/max principal, positive tenure), and verifies basic eligibility thresholds.
-3. **Mock Lender Evaluation**:
-   - The system queries configured mock lenders with the sanitized application parameters.
-   - Each mock lender executes internal fictional underwriting rules based on debt-to-income and employment stability.
-4. **Offer Aggregation & Display**:
-   - Active offers are returned with interest rates, calculated monthly installments (EMI), processing fees, and validity windows.
-   - The frontend renders an interactive comparison table highlighting the best rate and lowest EMI.
-5. **Offer Selection**:
-   - The borrower accepts their chosen offer, transitioning the application to the final accepted state.
+1. **Create Draft Application**: Customer initiates an application; system generates a draft record with a unique identifier.
+2. **Enter Profile Details**: Customer inputs demographic and financial attributes:
+   - **Age**
+   - **Monthly Income**
+   - **Work Type** (e.g., Salaried, Self-Employed)
+   - **Requested Loan Amount**
+3. **Display Purpose-Specific Demo Consent**: Presentation of clear, purpose-specific consent notices explicitly stating the scope of data use for mock loan matching.
+4. **Record Consent Audit Trail**: The backend records:
+   - `notice_version`: Exact version of the consent notice displayed.
+   - `timestamp`: UTC ISO 8601 timestamp when consent was granted/modified.
+   - `consent_status`: Explicit state (`GRANTED`, `REVOKED`, `PENDING`).
+5. **Allow Consent Revocation**: The customer can revoke previously granted demo consent at any point prior to final submission.
+6. **Check Active Consent**: The backend strictly validates that active, non-revoked consent exists before invoking the matching engine. If consent is absent or revoked, matching is blocked.
+7. **Run Three Mock Lender Policies**: The matching engine evaluates the applicant profile across three fictional lender policies:
+   - *Apex Financial Policy* (e.g., Prime risk rules: higher income & age requirements)
+   - *Horizon Credit Policy* (e.g., Mid-tier risk rules: flexible employment options)
+   - *Sterling Loans Policy* (e.g., Accessible credit rules: broad eligibility bounds)
+8. **Record Policy Versions & Audit Reasons**: The system persists:
+   - Exact policy version executed per lender.
+   - Explicit eligibility decisions or exclusion reasons (e.g., `MIN_INCOME_NOT_MET`, `AGE_OUT_OF_BOUNDS`, `MAX_AMOUNT_EXCEEDED`).
+9. **Display Eligible Offers & Nonmatching Lenders**: The customer receives transparent results displaying:
+   - Full offer cards for matching lenders.
+   - Transparent list of nonmatching lender names with high-level exclusion categories.
+10. **Display Key Financial Terms**: For every eligible offer, the UI displays:
+    - **APR** (Annual Percentage Rate)
+    - **Approved Loan Amount**
+    - **Tenure / Term** (months)
+    - **Monthly Instalment** (EMI)
+    - **Mock KFS Link** (Key Fact Statement document link for regulatory transparency simulation)
+11. **Select an Offer**: The customer selects their preferred loan product.
+12. **Prevent Duplicate Submissions**: A client-generated or backend-issued **unique submission key** (idempotency key) is required to submit the application. Resubmissions with the same key return the existing submission without creating duplicates.
+13. **Track Responses & Lifecycle**: The backend logs mock lender responses, webhook receipts, and maintains application state progression through final completion.
 
 ---
 
-## 3. Application State Lifecycle
+## 3. Failure Scenarios & Safe Backend Handling
 
-The loan application progresses through deterministic states managed by the backend service layer:
+The backend architecture must handle failure scenarios safely, preserving data integrity, idempotency, and state consistency:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Draft : Borrower initiates application
-    Draft --> Submitted : Borrower submits form
-    Submitted --> UnderReview : Validation passed & dispatch to lenders
-    UnderReview --> OffersGenerated : One or more mock lenders provide terms
-    UnderReview --> Rejected : No mock lenders approve application
-    OffersGenerated --> Accepted : Borrower accepts an offer
-    OffersGenerated --> Expired : Offer validity window lapses
-    Accepted --> [*]
-    Rejected --> [*]
-    Expired --> [*]
+    [*] --> Draft : Application Created
+    Draft --> ConsentPending : Details Entered
+    ConsentPending --> ConsentRevoked : Customer Revokes Consent
+    ConsentPending --> Matching : Active Consent Verified
+    Matching --> OffersPresented : Policies Evaluated
+    Matching --> Declined : All Policies Reject (Decline Reason Logged)
+    OffersPresented --> Selecting : Customer Selects Offer
+    Selecting --> Submitting : Unique Key Supplied
+    Submitting --> Completed : Success (Lender Confirmed)
+    Submitting --> TimedOut : Timeout (Fallback Handled)
+    Submitting --> Declined : Final Lender Decline
+    Completed --> [*]
+    TimedOut --> [*]
+    Declined --> [*]
+    ConsentRevoked --> [*]
 ```
 
-### State Descriptions:
-- **Draft**: Application started on the client, form incomplete or unsaved.
-- **Submitted**: Application received by the API and validated against schema requirements.
-- **UnderReview**: Loan evaluation in progress across mock lender integrations.
-- **OffersGenerated**: One or more approved loan terms returned for applicant comparison.
-- **Accepted**: Borrower has committed to a specific lender's terms.
-- **Rejected**: Application failed to meet mock underwriting criteria across all partners.
-- **Expired**: Borrower took no action within the offer validity period.
+### 3.1. Success
+- **Behavior**: Mock lender returns acceptance with final approved terms.
+- **Handling**: Backend transitions application status to `COMPLETED`, records partner confirmation ID, and returns confirmation details to the customer.
+
+### 3.2. Decline
+- **Behavior**: One or more mock lenders reject the application due to policy criteria or credit simulation thresholds.
+- **Handling**: System records the rejection event along with structured policy rejection codes. If all lenders decline, the application moves to `DECLINED` without breaking the workflow, offering transparent feedback.
+
+### 3.3. Timeout
+- **Behavior**: Simulated partner adapter fails to respond within the configured timeout window (e.g., 2000 ms).
+- **Handling**: The backend safely aborts the pending request, flags the partner response as `TIMEOUT`, records a timeout telemetry event for the admin dashboard, and proceeds with responses from available lenders.
+
+### 3.4. Duplicate Webhook
+- **Behavior**: Network retries or simulated webhook emitters trigger multiple identical status callbacks.
+- **Handling**: The backend enforces **idempotency** using the submission key and webhook event ID. If a webhook with an existing event ID has already been processed, the backend logs the duplicate, ignores redundant side effects, and returns `HTTP 200 OK`.
+
+### 3.5. Late Webhook
+- **Behavior**: A webhook arrives after the application has already transitioned into a terminal or timeout state (e.g., `TIMED_OUT`, `EXPIRED`, `CANCELLED`).
+- **Handling**: The backend safely accepts the payload for auditing purposes, logs a `LATE_WEBHOOK_RECEIVED` event, but **refuses to mutate** the terminal application state.
+
+### 3.6. Out-of-Order Status Event
+- **Behavior**: Asynchronous delivery results in a status event arriving out of sequence (e.g., `DISBURSED` received before `OFFER_ACCEPTED`, or `FINAL_CONFIRMATION` arriving before `IN_REVIEW`).
+- **Handling**: The backend implements a **monotonic state machine** with version checking or transition matrix validation. If an incoming event violates permissible state transitions, the event is queued or logged as an out-of-order exception, preventing invalid state regressions.
 
 ---
 
-## 4. Mock Lender Evaluation Logic (Fictional Simulation)
+## 4. Application State Transitions Summary
 
-To provide realistic marketplace behavior without external dependencies, mock lenders implement distinct risk appetites:
-
-- **Apex Financial**: Conservative partner. Requires higher fictional credit score/income; offers lowest interest rates (e.g., 6.5% - 8.5%).
-- **Horizon Credit**: Balanced partner. Flexible tenure options; moderate interest rates (e.g., 8.5% - 11.5%).
-- **Sterling Loans**: High-approval partner. Broader acceptance criteria for varied employment profiles; interest rates (e.g., 11.5% - 14.5%).
+| Current State | Permissible Next States | Trigger / Condition |
+|---|---|---|
+| `DRAFT` | `CONSENT_PENDING` | Profile data entered |
+| `CONSENT_PENDING` | `MATCHING`, `CONSENT_REVOKED` | Consent granted or revoked |
+| `CONSENT_REVOKED` | `CONSENT_PENDING` | Consent re-granted |
+| `MATCHING` | `OFFERS_PRESENTED`, `DECLINED` | Mock policies evaluated |
+| `OFFERS_PRESENTED` | `SELECTING`, `EXPIRED` | Customer views / timer lapses |
+| `SELECTING` | `SUBMITTING` | Customer chooses offer + submission key |
+| `SUBMITTING` | `COMPLETED`, `DECLINED`, `TIMED_OUT` | Mock partner webhook or timeout |
+| `COMPLETED` | *(Terminal)* | Final success state |
+| `DECLINED` | *(Terminal)* | All lenders declined |
+| `TIMED_OUT` | *(Terminal)* | Partner timeout threshold exceeded |

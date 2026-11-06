@@ -2,13 +2,15 @@
 
 ## 1. Overview & System Purpose
 
-The **Mini Loan Marketplace** is a full-stack training application designed to demonstrate the end-to-end architecture of a multi-lender consumer credit marketplace. In this platform:
-- Borrowers submit fictional loan inquiries (e.g., loan amount, tenure, employment type).
-- The platform evaluates applicant inputs against fictional underwriting rules.
-- Fictional mock lenders (e.g., *Apex Financial*, *Horizon Credit*, *Sterling Loans*) evaluate the inquiry and generate competitive, personalized loan offers.
-- Borrowers compare offers based on interest rate, tenure, and EMI, selecting the best fit.
+The **Mini Loan Marketplace** is a full-stack training application built to demonstrate the clean architecture of a multi-lender credit platform in accordance with the Module 16 capstone requirements.
 
-The system is engineered following modern decoupled architecture practices: a high-performance **FastAPI** backend, a modern **React + TypeScript** frontend, and a relational **PostgreSQL** persistence layer managed via **SQLAlchemy** and **Alembic**.
+In this platform:
+- Fictional borrowers initiate applications, provide purpose-specific demo consent, and evaluate mock loan offers.
+- Callers view and manage mock leads strictly assigned to them with zero access to peer data or administrative controls.
+- Administrators inspect aggregate funnel analytics, latency, and error metrics without receiving sensitive customer records.
+- Simulated mock lenders (*Apex Financial*, *Horizon Credit*, *Sterling Loans*) evaluate applications against distinct policy rules without connecting to live financial networks or bureaus.
+
+The platform is decoupled into a **React + TypeScript** frontend, a **FastAPI** backend, and a **PostgreSQL** relational database managed via **SQLAlchemy** and **Alembic**.
 
 ---
 
@@ -16,96 +18,109 @@ The system is engineered following modern decoupled architecture practices: a hi
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["Client Layer (Frontend)"]
-        UI["React + TypeScript SPA"]
-        Components["UI Components & Pages"]
-        StateService["Services & API Hooks"]
-        UI --> Components
-        Components --> StateService
+    subgraph ClientInterfaces ["Client Interfaces (React + TypeScript SPA)"]
+        CustomerUI["Customer Interface<br>(Drafts, Demo Consent, Offers, Selection)"]
+        CallerUI["Caller Interface<br>(Scoped Mock Leads, No Admin Access)"]
+        AdminUI["Admin Interface<br>(Aggregate Funnel, Delays, Error Telemetry)"]
     end
 
-    subgraph APILayer ["Application & API Layer (Backend)"]
-        FastAPIApp["FastAPI Application"]
-        Router["API Routers (/api/v1)"]
-        Core["Core Config & Security"]
-        Schemas["Pydantic Schemas (Validation)"]
-        Services["Business Logic Services"]
+    subgraph BackendApp ["FastAPI Backend Application"]
+        APIRouter["API Router & Auth/RBAC Guard"]
 
-        FastAPIApp --> Router
-        Router --> Core
-        Router --> Schemas
-        Router --> Services
+        subgraph CoreServices ["Core Application Services"]
+            AppService["Application Service<br>(Drafts, Inputs, State Orchestration)"]
+            ConsentService["Consent Service<br>(Notice Versions, Timestamps, Revocations)"]
+            MatchingService["Matching Service<br>(Policy Engine, Exclusion Tracking)"]
+            OfferService["Offer Service<br>(APR, Instalments, Mock KFS Links)"]
+            SubmissionService["Submission Service<br>(Unique Submission Key & Idempotency)"]
+        end
+
+        APIRouter --> AppService
+        APIRouter --> ConsentService
+        APIRouter --> MatchingService
+        APIRouter --> OfferService
+        APIRouter --> SubmissionService
+
+        AppService <--> ConsentService
+        ConsentService --> MatchingService
+        MatchingService --> OfferService
+        OfferService --> SubmissionService
     end
 
-    subgraph DataLayer ["Data & Persistence Layer"]
-        ORM["SQLAlchemy Models"]
-        Alembic["Alembic Migrations"]
-        DB[("PostgreSQL Database")]
+    subgraph PersistenceLayer ["Data & Persistence Layer"]
+        DB[("PostgreSQL Database<br>(Applications, Consents, Policies, Offers, Submissions)")]
 
-        Services --> ORM
-        ORM --> DB
-        Alembic -.-> DB
+        AppService --> DB
+        ConsentService --> DB
+        MatchingService --> DB
+        OfferService --> DB
+        SubmissionService --> DB
     end
 
-    subgraph MockLenderLayer ["Mock Lender Integration Layer"]
-        LenderInterface["Lender Integration Gateway"]
-        MockLender1["Mock Lender: Apex Financial"]
-        MockLender2["Mock Lender: Horizon Credit"]
-        MockLender3["Mock Lender: Sterling Loans"]
+    subgraph ExternalSimulations ["External Simulated Integrations"]
+        LenderAdapters["Mock Lender Adapters"]
+        Lender1["Mock Lender: Apex Financial"]
+        Lender2["Mock Lender: Horizon Credit"]
+        Lender3["Mock Lender: Sterling Loans"]
 
-        Services --> LenderInterface
-        LenderInterface --> MockLender1
-        LenderInterface --> MockLender2
-        LenderInterface --> MockLender3
+        SubmissionService <--> LenderAdapters
+        LenderAdapters --> Lender1
+        LenderAdapters --> Lender2
+        LenderAdapters --> Lender3
     end
 
-    StateService -->|"HTTP / REST API (JSON)"| FastAPIApp
+    CustomerUI -->|"REST / JSON"| APIRouter
+    CallerUI -->|"REST / JSON"| APIRouter
+    AdminUI -->|"REST / JSON (No Sensitive PII)"| APIRouter
 ```
 
 ---
 
-## 3. Core Architectural Layers
+## 3. Core Architectural Components
 
-### 3.1. Client Layer (Frontend)
-- **Framework**: React with TypeScript.
-- **Role**: Provides a responsive, accessible interface for borrowers and administrators.
-- **Key Modules**:
-  - `src/components`: Reusable presentational UI elements (inputs, modals, badges, layout shells).
-  - `src/pages`: Top-level route pages (Marketplace Landing, Application Form, Offers Dashboard, Admin Panel).
-  - `src/features`: Domain-driven feature modules encapsulating feature-specific UI and business logic.
-  - `src/services`: API client wrappers handling network requests to the backend.
-  - `src/hooks`: Custom React hooks for state sharing, form management, and asynchronous data fetching.
-  - `src/types`: TypeScript interfaces and types matching backend API schemas.
+### 3.1. Client Interfaces
+- **Customer Interface**: Supports application drafting, demographic input (age, monthly income, work type, requested amount), purpose-specific demo consent granting and revocation, eligible offers comparison (APR, amount, term, instalment, mock KFS link), and offer selection.
+- **Caller Interface**: Scoped view granting access only to assigned mock leads; strictly prevents visibility of other callers' leads and blocks admin routes.
+- **Admin Interface**: Provides aggregate business intelligence (application funnel stages, mock lender response latency, error events). Designed to never expose sensitive customer PII in telemetry payloads.
 
-### 3.2. Application & API Layer (Backend)
-- **Framework**: Python 3.11+ with FastAPI.
-- **Role**: Serves RESTful endpoints, enforces input validation, orchestrates loan offer processing, and manages business workflows.
-- **Key Modules**:
-  - `app/api/v1`: Endpoint definitions and routing controllers.
-  - `app/core`: Configuration settings (Pydantic BaseSettings), logging, and security utilities.
-  - `app/schemas`: Pydantic data models for request validation and response serialization.
-  - `app/services`: Application domain logic (loan eligibility checks, offer matching, application lifecycle).
-  - `app/integrations/mock_lenders`: Simulators for external lending partners with configurable interest tiers and latency simulation.
+### 3.2. FastAPI Backend & Core Services
+- **Application Service**: Manages draft applications, stores borrower input parameters (age, income, work type, amount), and validates lifecycle states.
+- **Consent Service**: Records notice versions, timestamps, and explicit consent status (`GRANTED`, `REVOKED`). Allows revocation and verifies active consent prior to matching.
+- **Matching Service**: Enforces active consent verification before executing three distinct mock lender underwriting policies. Persists policy versions, eligible matches, and exclusion reasons.
+- **Offer Service**: Formats eligible offers with calculated APR, terms, monthly instalments, and mock KFS links. Displays nonmatching lender names transparently and manages offer selection.
+- **Submission Service**: Enforces idempotency via unique submission keys, orchestrates mock lender adapter calls, processes simulated webhooks, and tracks final statuses.
 
-### 3.3. Data & Persistence Layer
-- **Database**: PostgreSQL.
-- **ORM & Migrations**: SQLAlchemy (2.0 declarative style) and Alembic.
-- **Key Modules**:
-  - `app/db`: Database engine initialization, connection pooling, and session management.
-  - `app/models`: SQLAlchemy entity declarations (Applications, Borrowers, Offers, Lenders).
+### 3.3. Mock Lender Adapters (External Simulated Integrations)
+- External to application user roles and core business models.
+- Integrates three distinct mock lenders:
+  - **Apex Financial Adapter**: Simulates prime tier risk appetite.
+  - **Horizon Credit Adapter**: Simulates balanced risk appetite.
+  - **Sterling Loans Adapter**: Simulates broad eligibility appetite.
 
-### 3.4. Mock Integrations Layer
-- **Role**: Replaces external third-party lenders, credit rating agencies, and notification gateways with completely isolated, deterministic mock adapters.
-- **Characteristics**:
-  - No network dependencies on external financial institutions.
-  - Simulated underwriting criteria and response delays to emulate real-world asynchronous lender quoting.
+### 3.4. Persistence Layer
+- **PostgreSQL**: Relational storage for applications, audit trails (consent history, policy versions, exclusion reasons), offers, and submissions.
+- **SQLAlchemy 2.0 & Alembic**: Declarative schemas, migrations, and transactional boundaries.
 
 ---
 
-## 4. Design Principles & Guidelines
+## 4. Failure Handling & Reliability Architecture
 
-1. **Separation of Concerns**: Strict layering between routing (`api`), validation (`schemas`), business logic (`services`), and persistence (`models`/`db`).
-2. **Contract-Driven Communication**: TypeScript types mirror FastAPI Pydantic schemas to ensure end-to-end type safety.
-3. **Fictional & Isolated by Design**: Zero connection to real credit bureaus, banking APIs, or external credentials.
-4. **Testability**: Architecture decoupled to support unit, integration, and contract tests via Pytest, HTTPX, and Vitest.
-5. **Container-Ready**: Designed for single-command orchestration with Docker.
+The backend services implement dedicated patterns to safely manage failure modes:
+
+| Failure Scenario | Architectural Defense |
+|---|---|
+| **Success** | Atomic database transaction commits offer acceptance, generates partner tracking ID, and updates application state to `COMPLETED`. |
+| **Decline** | Non-blocking exception logging; records exclusion reason code in the database and updates status to `DECLINED` without application failure. |
+| **Timeout** | Asynchronous HTTP client timeouts (e.g., 2000 ms); circuit breakers fall back gracefully, recording telemetry in admin error events. |
+| **Duplicate Webhook** | Idempotency guard backed by unique submission keys and webhook message IDs; duplicate payloads return `HTTP 200` without duplicate mutations. |
+| **Late Webhook** | Monotonic state guard; webhooks arriving after terminal states (`TIMED_OUT`, `EXPIRED`, `CANCELLED`) are logged as audit events without mutating final state. |
+| **Out-of-Order Status Event** | State transition validation matrix; rejects or buffers events that violate allowable lifecycle sequences (e.g. `DISBURSED` before `IN_REVIEW`). |
+
+---
+
+## 5. Scope & Design Guardrails
+
+1. **Strictly Fictional**: All applicants, financial records, credit profiles, and lenders are mock simulations.
+2. **Zero Real Integrations**: No live connections to credit bureaus, financial institutions, or SMS/OTP gateways.
+3. **No Claim of Real Loan Approval**: The system simulates pre-qualification workflows; no actual credit or funds are extended.
+4. **Capstone Scope Alignment**: Conforms strictly to Module 16 requirements without extraneous enterprise overhead.
