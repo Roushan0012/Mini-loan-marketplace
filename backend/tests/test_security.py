@@ -102,3 +102,23 @@ def test_tampered_token_is_rejected():
     wrong_key = "different-test-secret-key-that-does-not-match-12345"
     with pytest.raises(TokenSecurityError):
         decode_access_token(token, secret_key=wrong_key)
+
+
+def test_missing_required_claims_rejected():
+    """Verify tokens missing sub, iat, or exp claims are rejected."""
+    import jwt
+
+    # Token missing 'sub'
+    token_no_sub = jwt.encode({"iat": 1000000, "exp": 2000000}, TEST_SECRET_KEY, algorithm="HS256")
+    with pytest.raises(TokenSecurityError):
+        decode_access_token(token_no_sub, secret_key=TEST_SECRET_KEY)
+
+    # Token missing 'iat'
+    token_no_iat = jwt.encode({"sub": "1", "exp": 2000000}, TEST_SECRET_KEY, algorithm="HS256")
+    with pytest.raises(TokenSecurityError):
+        decode_access_token(token_no_iat, secret_key=TEST_SECRET_KEY)
+
+    # Token missing 'exp'
+    token_no_exp = jwt.encode({"sub": "1", "iat": 1000000}, TEST_SECRET_KEY, algorithm="HS256")
+    with pytest.raises(TokenSecurityError):
+        decode_access_token(token_no_exp, secret_key=TEST_SECRET_KEY)

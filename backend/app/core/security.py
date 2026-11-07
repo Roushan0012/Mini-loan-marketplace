@@ -68,7 +68,7 @@ def decode_access_token(
     secret_key: Optional[str] = None,
     algorithm: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Decode and validate a JWT access token, enforcing expiration and signature."""
+    """Decode and validate a JWT access token, enforcing expiration, claims, and signature."""
     key = secret_key or settings.JWT_SECRET_KEY
     allowed_algorithms = [algorithm or settings.JWT_ALGORITHM]
 
@@ -77,6 +77,7 @@ def decode_access_token(
             token,
             key,
             algorithms=allowed_algorithms,
+            options={"require": ["sub", "iat", "exp"]},
         )
         return payload
     except ExpiredSignatureError as exc:
