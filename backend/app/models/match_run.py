@@ -81,8 +81,8 @@ class MatchRun(Base):
         "Consent",
         back_populates="match_runs",
     )
+    # Historical decisions: preserve records without destructive delete cascade
     decisions: Mapped[List["LenderDecision"]] = relationship(
         "LenderDecision",
         back_populates="match_run",
-        cascade="all, delete-orphan",
     )

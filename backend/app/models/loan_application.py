@@ -89,18 +89,16 @@ class LoanApplication(Base):
         "Lead",
         back_populates="loan_applications",
     )
+    # Historical audit relationships: retain records without destructive delete cascade
     consents: Mapped[List["Consent"]] = relationship(
         "Consent",
         back_populates="application",
-        cascade="all, delete-orphan",
     )
     match_runs: Mapped[List["MatchRun"]] = relationship(
         "MatchRun",
         back_populates="application",
-        cascade="all, delete-orphan",
     )
     offer_submissions: Mapped[List["OfferSubmission"]] = relationship(
         "OfferSubmission",
         back_populates="application",
-        cascade="all, delete-orphan",
     )

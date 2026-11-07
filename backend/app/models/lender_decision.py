@@ -37,7 +37,7 @@ class LenderDecision(Base):
             name="decision_status",
         ),
         CheckConstraint(
-            "((decision_status = 'eligible' AND exclusion_reason_code IS NULL) OR "
+            "((decision_status = 'eligible' AND exclusion_reason_code IS NULL AND exclusion_reason IS NULL) OR "
             "(decision_status = 'ineligible' AND exclusion_reason_code IS NOT NULL))",
             name="decision_exclusion_rules",
         ),

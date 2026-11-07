@@ -1,5 +1,6 @@
 import pytest
 from sqlalchemy import BigInteger
+from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import configure_mappers
 
 from app.db.base import Base
@@ -219,10 +220,14 @@ def test_check_constraints_present():
     mr_ck = [ck.name for ck in tables["match_runs"].constraints if hasattr(ck, "sqltext")]
     assert "ck_match_runs_status" in mr_ck
 
-    # lender_decisions: status and exclusion rules
-    ld_ck = [ck.name for ck in tables["lender_decisions"].constraints if hasattr(ck, "sqltext")]
-    assert "ck_lender_decisions_decision_status" in ld_ck
-    assert "ck_lender_decisions_decision_exclusion_rules" in ld_ck
+    # lender_decisions: status and strengthened exclusion rules
+    ld_ck_map = {ck.name: str(ck.sqltext) for ck in tables["lender_decisions"].constraints if hasattr(ck, "sqltext")}
+    assert "ck_lender_decisions_decision_status" in ld_ck_map
+    assert "ck_lender_decisions_decision_exclusion_rules" in ld_ck_map
+    exclusion_sql = ld_ck_map["ck_lender_decisions_decision_exclusion_rules"]
+    assert "exclusion_reason IS NULL" in exclusion_sql
+    assert "exclusion_reason_code IS NULL" in exclusion_sql
+    assert "exclusion_reason_code IS NOT NULL" in exclusion_sql
 
     # offers: financial positive bounds and status
     offer_ck = [ck.name for ck in tables["offers"].constraints if hasattr(ck, "sqltext")]
@@ -291,3 +296,26 @@ def test_model_relationships():
 
     # LenderEvent relationships
     assert hasattr(LenderEvent, "submission")
+
+
+def test_audit_history_relationships_no_delete_cascade():
+    """Verify that historical and audit relationships do NOT have delete or delete-orphan cascades."""
+    # LoanApplication audit relationships: consents, match_runs, offer_submissions
+    app_mapper = inspect(LoanApplication)
+    for rel_name in ("consents", "match_runs", "offer_submissions"):
+        rel = app_mapper.relationships[rel_name]
+        cascade = rel.cascade
+        assert not cascade.delete, f"LoanApplication.{rel_name} must not have delete cascade"
+        assert not cascade.delete_orphan, f"LoanApplication.{rel_name} must not have delete-orphan cascade"
+
+    # MatchRun historical decisions
+    mr_mapper = inspect(MatchRun)
+    rel = mr_mapper.relationships["decisions"]
+    assert not rel.cascade.delete, "MatchRun.decisions must not have delete cascade"
+    assert not rel.cascade.delete_orphan, "MatchRun.decisions must not have delete-orphan cascade"
+
+    # OfferSubmission webhook event ledger
+    sub_mapper = inspect(OfferSubmission)
+    rel = sub_mapper.relationships["events"]
+    assert not rel.cascade.delete, "OfferSubmission.events must not have delete cascade"
+    assert not rel.cascade.delete_orphan, "OfferSubmission.events must not have delete-orphan cascade"

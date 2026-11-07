@@ -86,8 +86,8 @@ class OfferSubmission(Base):
         "Offer",
         back_populates="submission",
     )
+    # Event ledger: retain audit history without destructive delete cascade
     events: Mapped[List["LenderEvent"]] = relationship(
         "LenderEvent",
         back_populates="submission",
-        cascade="all, delete-orphan",
     )
