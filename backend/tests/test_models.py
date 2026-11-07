@@ -3,8 +3,20 @@ from sqlalchemy import BigInteger
 from sqlalchemy.orm import configure_mappers
 
 from app.db.base import Base
-import app.models  # Registers all models in Base.metadata
-from app.models import Consent, Lead, LeadAssignment, LoanApplication, User
+import app.models  # Registers all 11 models in Base.metadata
+from app.models import (
+    Consent,
+    Lead,
+    LeadAssignment,
+    LenderDecision,
+    LenderEvent,
+    LenderPolicy,
+    LoanApplication,
+    MatchRun,
+    Offer,
+    OfferSubmission,
+    User,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -14,28 +26,40 @@ def setup_mappers():
 
 
 def test_expected_tables_in_metadata():
-    """Verify that all five expected table names are registered in Base.metadata."""
+    """Verify that all eleven expected table names are registered in Base.metadata."""
     expected_tables = {
         "users",
         "leads",
         "lead_assignments",
         "loan_applications",
         "consents",
+        "lender_policies",
+        "match_runs",
+        "lender_decisions",
+        "offers",
+        "offer_submissions",
+        "lender_events",
     }
     actual_tables = set(Base.metadata.tables.keys())
-    assert expected_tables.issubset(actual_tables), (
-        f"Missing tables: {expected_tables - actual_tables}"
+    assert expected_tables == actual_tables, (
+        f"Mismatch in registered tables. Expected: {expected_tables}, got: {actual_tables}"
     )
 
 
 def test_primary_keys_defined():
-    """Verify that every foundational model defines an 'id' BigInteger primary key."""
+    """Verify that every foundational and workflow model defines an 'id' BigInteger primary key."""
     expected_tables = [
         "users",
         "leads",
         "lead_assignments",
         "loan_applications",
         "consents",
+        "lender_policies",
+        "match_runs",
+        "lender_decisions",
+        "offers",
+        "offer_submissions",
+        "lender_events",
     ]
     for table_name in expected_tables:
         table = Base.metadata.tables[table_name]
@@ -52,22 +76,54 @@ def test_foreign_keys_present():
     tables = Base.metadata.tables
 
     # lead_assignments foreign keys
-    la_table = tables["lead_assignments"]
-    la_fks = {fk.target_fullname for fk in la_table.foreign_keys}
+    la_fks = {fk.target_fullname for fk in tables["lead_assignments"].foreign_keys}
     assert "leads.id" in la_fks, "lead_assignments.lead_id must reference leads.id"
     assert "users.id" in la_fks, "lead_assignments.caller_id must reference users.id"
 
     # loan_applications foreign keys
-    app_table = tables["loan_applications"]
-    app_fks = {fk.target_fullname for fk in app_table.foreign_keys}
+    app_fks = {fk.target_fullname for fk in tables["loan_applications"].foreign_keys}
     assert "users.id" in app_fks, "loan_applications.customer_id must reference users.id"
     assert "leads.id" in app_fks, "loan_applications.lead_id must reference leads.id"
 
     # consents foreign keys
-    consent_table = tables["consents"]
-    consent_fks = {fk.target_fullname for fk in consent_table.foreign_keys}
+    consent_fks = {fk.target_fullname for fk in tables["consents"].foreign_keys}
     assert "loan_applications.id" in consent_fks, (
         "consents.application_id must reference loan_applications.id"
+    )
+
+    # match_runs foreign keys
+    mr_fks = {fk.target_fullname for fk in tables["match_runs"].foreign_keys}
+    assert "loan_applications.id" in mr_fks, (
+        "match_runs.application_id must reference loan_applications.id"
+    )
+    assert "consents.id" in mr_fks, "match_runs.consent_id must reference consents.id"
+
+    # lender_decisions foreign keys
+    ld_fks = {fk.target_fullname for fk in tables["lender_decisions"].foreign_keys}
+    assert "match_runs.id" in ld_fks, (
+        "lender_decisions.match_run_id must reference match_runs.id"
+    )
+    assert "lender_policies.id" in ld_fks, (
+        "lender_decisions.lender_policy_id must reference lender_policies.id"
+    )
+
+    # offers foreign keys
+    offer_fks = {fk.target_fullname for fk in tables["offers"].foreign_keys}
+    assert "lender_decisions.id" in offer_fks, (
+        "offers.lender_decision_id must reference lender_decisions.id"
+    )
+
+    # offer_submissions foreign keys
+    os_fks = {fk.target_fullname for fk in tables["offer_submissions"].foreign_keys}
+    assert "loan_applications.id" in os_fks, (
+        "offer_submissions.application_id must reference loan_applications.id"
+    )
+    assert "offers.id" in os_fks, "offer_submissions.offer_id must reference offers.id"
+
+    # lender_events foreign keys
+    le_fks = {fk.target_fullname for fk in tables["lender_events"].foreign_keys}
+    assert "offer_submissions.id" in le_fks, (
+        "lender_events.submission_id must reference offer_submissions.id"
     )
 
 
@@ -89,57 +145,105 @@ def test_unique_constraints_present():
     )
 
     # consents: unique composite constraint on (application_id, purpose, notice_version)
-    consent_table = tables["consents"]
-    unique_col_sets = [
-        set(c.name for c in uc.columns) for uc in consent_table.constraints if hasattr(uc, "columns") and getattr(uc, "name", "") and "uq" in uc.name.lower()
+    consent_ucs = [
+        set(c.name for c in uc.columns)
+        for uc in tables["consents"].constraints
+        if hasattr(uc, "columns") and getattr(uc, "name", "") and "uq" in uc.name.lower()
     ]
-    # Check if (application_id, purpose, notice_version) exists in unique constraints
-    expected_set = {"application_id", "purpose", "notice_version"}
-    found = any(expected_set == cols for cols in unique_col_sets)
-    assert found, (
-        f"Expected composite unique constraint on {expected_set} not found in consents constraints."
+    assert {"application_id", "purpose", "notice_version"} in consent_ucs
+
+    # lender_policies: unique composite constraint on (lender_code, policy_version)
+    policy_ucs = [
+        set(c.name for c in uc.columns)
+        for uc in tables["lender_policies"].constraints
+        if hasattr(uc, "columns") and getattr(uc, "name", "") and "uq" in uc.name.lower()
+    ]
+    assert {"lender_code", "policy_version"} in policy_ucs
+
+    # match_runs: unique composite constraint on (application_id, run_number)
+    mr_ucs = [
+        set(c.name for c in uc.columns)
+        for uc in tables["match_runs"].constraints
+        if hasattr(uc, "columns") and getattr(uc, "name", "") and "uq" in uc.name.lower()
+    ]
+    assert {"application_id", "run_number"} in mr_ucs
+
+    # lender_decisions: unique composite constraint on (match_run_id, lender_policy_id)
+    ld_ucs = [
+        set(c.name for c in uc.columns)
+        for uc in tables["lender_decisions"].constraints
+        if hasattr(uc, "columns") and getattr(uc, "name", "") and "uq" in uc.name.lower()
+    ]
+    assert {"match_run_id", "lender_policy_id"} in ld_ucs
+
+    # offers.lender_decision_id must be unique
+    assert tables["offers"].c.lender_decision_id.unique, (
+        "offers.lender_decision_id must be unique"
     )
+
+    # offer_submissions unique fields
+    os_table = tables["offer_submissions"]
+    assert os_table.c.application_id.unique, "offer_submissions.application_id must be unique"
+    assert os_table.c.offer_id.unique, "offer_submissions.offer_id must be unique"
+    assert os_table.c.idempotency_key.unique, "offer_submissions.idempotency_key must be unique"
+
+    # lender_events.event_id must be unique
+    assert tables["lender_events"].c.event_id.unique, "lender_events.event_id must be unique"
 
 
 def test_check_constraints_present():
-    """Verify named CHECK constraints for allowed values and positive bounds."""
+    """Verify named CHECK constraints for allowed values, positive bounds, and business rules."""
     tables = Base.metadata.tables
 
     # users: role in ('customer', 'caller', 'admin')
-    user_ck_names = [ck.name for ck in tables["users"].constraints if hasattr(ck, "sqltext")]
-    assert "ck_users_role" in user_ck_names, "Missing 'ck_users_role' check constraint."
+    user_ck = [ck.name for ck in tables["users"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_users_role" in user_ck
 
     # consents: status in ('pending', 'granted', 'revoked')
-    consent_ck_names = [ck.name for ck in tables["consents"].constraints if hasattr(ck, "sqltext")]
-    assert "ck_consents_status" in consent_ck_names, (
-        "Missing 'ck_consents_status' check constraint."
-    )
+    consent_ck = [ck.name for ck in tables["consents"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_consents_status" in consent_ck
 
     # leads: positive age, non-negative income, positive requested amount
-    leads_ck_names = [ck.name for ck in tables["leads"].constraints if hasattr(ck, "sqltext")]
-    assert "ck_leads_age_positive" in leads_ck_names, "Missing 'ck_leads_age_positive'"
-    assert "ck_leads_monthly_income_non_negative" in leads_ck_names, (
-        "Missing 'ck_leads_monthly_income_non_negative'"
-    )
-    assert "ck_leads_requested_amount_positive" in leads_ck_names, (
-        "Missing 'ck_leads_requested_amount_positive'"
-    )
+    leads_ck = [ck.name for ck in tables["leads"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_leads_age_positive" in leads_ck
+    assert "ck_leads_monthly_income_non_negative" in leads_ck
+    assert "ck_leads_requested_amount_positive" in leads_ck
 
     # loan_applications: positive age, non-negative income, positive requested amount
-    app_ck_names = [ck.name for ck in tables["loan_applications"].constraints if hasattr(ck, "sqltext")]
-    assert "ck_loan_applications_age_positive" in app_ck_names, (
-        "Missing 'ck_loan_applications_age_positive'"
-    )
-    assert "ck_loan_applications_monthly_income_non_negative" in app_ck_names, (
-        "Missing 'ck_loan_applications_monthly_income_non_negative'"
-    )
-    assert "ck_loan_applications_requested_amount_positive" in app_ck_names, (
-        "Missing 'ck_loan_applications_requested_amount_positive'"
-    )
+    app_ck = [ck.name for ck in tables["loan_applications"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_loan_applications_age_positive" in app_ck
+    assert "ck_loan_applications_monthly_income_non_negative" in app_ck
+    assert "ck_loan_applications_requested_amount_positive" in app_ck
+
+    # match_runs: status in ('started', 'completed', 'failed')
+    mr_ck = [ck.name for ck in tables["match_runs"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_match_runs_status" in mr_ck
+
+    # lender_decisions: status and exclusion rules
+    ld_ck = [ck.name for ck in tables["lender_decisions"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_lender_decisions_decision_status" in ld_ck
+    assert "ck_lender_decisions_decision_exclusion_rules" in ld_ck
+
+    # offers: financial positive bounds and status
+    offer_ck = [ck.name for ck in tables["offers"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_offers_loan_amount_positive" in offer_ck
+    assert "ck_offers_apr_non_negative" in offer_ck
+    assert "ck_offers_term_months_positive" in offer_ck
+    assert "ck_offers_monthly_installment_positive" in offer_ck
+    assert "ck_offers_status" in offer_ck
+
+    # offer_submissions: status in allowed values
+    os_ck = [ck.name for ck in tables["offer_submissions"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_offer_submissions_status" in os_ck
+
+    # lender_events: processing_status and sequence_number_positive
+    le_ck = [ck.name for ck in tables["lender_events"].constraints if hasattr(ck, "sqltext")]
+    assert "ck_lender_events_processing_status" in le_ck
+    assert "ck_lender_events_sequence_number_positive" in le_ck
 
 
 def test_model_relationships():
-    """Verify bidirectional relationship mapping across all five entities."""
+    """Verify bidirectional relationship mapping across all eleven entities."""
     # User relationships
     assert hasattr(User, "assigned_leads")
     assert hasattr(User, "loan_applications")
@@ -156,6 +260,34 @@ def test_model_relationships():
     assert hasattr(LoanApplication, "customer")
     assert hasattr(LoanApplication, "lead")
     assert hasattr(LoanApplication, "consents")
+    assert hasattr(LoanApplication, "match_runs")
+    assert hasattr(LoanApplication, "offer_submissions")
 
-    # Consent relationship
+    # Consent relationships
     assert hasattr(Consent, "application")
+    assert hasattr(Consent, "match_runs")
+
+    # LenderPolicy relationships
+    assert hasattr(LenderPolicy, "decisions")
+
+    # MatchRun relationships
+    assert hasattr(MatchRun, "application")
+    assert hasattr(MatchRun, "consent")
+    assert hasattr(MatchRun, "decisions")
+
+    # LenderDecision relationships
+    assert hasattr(LenderDecision, "match_run")
+    assert hasattr(LenderDecision, "lender_policy")
+    assert hasattr(LenderDecision, "offer")
+
+    # Offer relationships
+    assert hasattr(Offer, "lender_decision")
+    assert hasattr(Offer, "submission")
+
+    # OfferSubmission relationships
+    assert hasattr(OfferSubmission, "application")
+    assert hasattr(OfferSubmission, "offer")
+    assert hasattr(OfferSubmission, "events")
+
+    # LenderEvent relationships
+    assert hasattr(LenderEvent, "submission")

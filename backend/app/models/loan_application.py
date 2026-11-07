@@ -19,6 +19,8 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.consent import Consent
     from app.models.lead import Lead
+    from app.models.match_run import MatchRun
+    from app.models.offer_submission import OfferSubmission
     from app.models.user import User
 
 
@@ -89,6 +91,16 @@ class LoanApplication(Base):
     )
     consents: Mapped[List["Consent"]] = relationship(
         "Consent",
+        back_populates="application",
+        cascade="all, delete-orphan",
+    )
+    match_runs: Mapped[List["MatchRun"]] = relationship(
+        "MatchRun",
+        back_populates="application",
+        cascade="all, delete-orphan",
+    )
+    offer_submissions: Mapped[List["OfferSubmission"]] = relationship(
+        "OfferSubmission",
         back_populates="application",
         cascade="all, delete-orphan",
     )

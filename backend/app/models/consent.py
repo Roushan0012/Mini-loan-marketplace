@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     BigInteger,
@@ -16,6 +16,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.loan_application import LoanApplication
+    from app.models.match_run import MatchRun
 
 
 class Consent(Base):
@@ -71,8 +72,13 @@ class Consent(Base):
         nullable=False,
     )
 
-    # Relationship
+    # Relationships
     application: Mapped["LoanApplication"] = relationship(
         "LoanApplication",
         back_populates="consents",
+    )
+    # Historical match runs executed under this verified consent record (non-destructive)
+    match_runs: Mapped[List["MatchRun"]] = relationship(
+        "MatchRun",
+        back_populates="consent",
     )
