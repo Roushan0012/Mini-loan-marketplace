@@ -132,8 +132,10 @@ def test_unique_constraints_present():
     """Verify unique constraints on required columns and composite keys."""
     tables = Base.metadata.tables
 
-    # users.email must be unique
+    # users: email unique and password_hash required
     assert tables["users"].c.email.unique, "users.email must be unique"
+    assert "password_hash" in tables["users"].c, "users.password_hash column must exist"
+    assert not tables["users"].c.password_hash.nullable, "users.password_hash must be NOT NULL"
 
     # leads.synthetic_reference must be unique
     assert tables["leads"].c.synthetic_reference.unique, (

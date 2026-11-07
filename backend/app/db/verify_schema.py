@@ -73,6 +73,17 @@ def verify_database_schema() -> bool:
 
     print("Alembic revision is up to date (current matches head).")
 
+    # Verify users table columns, particularly password_hash
+    users_columns = {col["name"]: col for col in inspector.get_columns("users")}
+    if "password_hash" not in users_columns:
+        print("\nERROR: 'password_hash' column missing in 'users' table!", file=sys.stderr)
+        return False
+    pw_col = users_columns["password_hash"]
+    if pw_col.get("nullable") is not False:
+        print("\nERROR: 'password_hash' column in 'users' table must be NOT NULL!", file=sys.stderr)
+        return False
+    print(f"'users.password_hash' column is present, type={pw_col['type']}, nullable={pw_col['nullable']}.")
+
     # Detailed constraint sampling
     print("\nSample constraints verified in PostgreSQL:")
     for table_name in ["lender_decisions", "offers", "offer_submissions", "lender_events"]:

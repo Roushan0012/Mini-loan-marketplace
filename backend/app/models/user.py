@@ -12,10 +12,7 @@ if TYPE_CHECKING:
 
 
 class User(Base):
-    """User account entity representing customers, callers, and administrators.
-
-    Authentication/passwords are not implemented at this foundational stage.
-    """
+    """User account entity representing customers, callers, and administrators."""
 
     __tablename__ = "users"
 
@@ -34,6 +31,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Secure password hash storage (Argon2); plaintext passwords must never be persisted
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Audit timestamps (timezone-aware)
     created_at: Mapped[datetime] = mapped_column(

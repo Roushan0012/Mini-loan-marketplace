@@ -6,3 +6,5 @@ SQLAlchemy
 psycopg[binary]
 pydantic-settings
 alembic
+pwdlib[argon2]
+PyJWT

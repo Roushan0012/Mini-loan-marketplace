@@ -1,15 +1,29 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Determine repository root directory where .env is located
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 ENV_FILE = ROOT_DIR / ".env"
 
+INSECURE_JWT_PLACEHOLDERS = {
+    "",
+    "secret",
+    "jwt-secret",
+    "change-me",
+    "changethis",
+    "placeholder",
+    "your-secret-key",
+    "your-secret-key-here",
+    "change-this-to-a-secure-random-secret-key-in-production",
+    "change-this-to-a-secure-jwt-secret-key-in-local-env",
+}
+
 
 class Settings(BaseSettings):
-    """Application and PostgreSQL configuration settings."""
+    """Application, security, and PostgreSQL configuration settings."""
 
     # Project settings
     PROJECT_NAME: str = "Mini Loan Marketplace"
@@ -17,12 +31,31 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
 
+    # Security & JWT configuration
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
     # PostgreSQL configuration
     POSTGRES_DB: str = "mini_loan_marketplace"
     POSTGRES_USER: str = "marketplace_user"
     POSTGRES_PASSWORD: str = "local_dev_password_change_me"
     POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
+
+    @field_validator("JWT_SECRET_KEY")
+    @classmethod
+    def validate_jwt_secret_key(cls, v: str) -> str:
+        trimmed = (v or "").strip()
+        if not trimmed:
+            raise ValueError(
+                "JWT_SECRET_KEY must be configured in environment or .env file and cannot be empty."
+            )
+        if trimmed.lower() in INSECURE_JWT_PLACEHOLDERS or len(trimmed) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY cannot use insecure placeholders and must be at least 32 characters long."
+            )
+        return trimmed
 
     model_config = SettingsConfigDict(
         env_file=(str(ENV_FILE), ".env"),
