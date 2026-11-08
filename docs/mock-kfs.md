@@ -86,7 +86,7 @@ In the Mini Loan Marketplace training platform, the **Mock KFS Endpoint** serves
   "estimated_total_interest": "39635.68",
   "amortization_method": "Monthly reducing-balance",
   "fee_disclosure": "Processing fees, origination charges, insurance premiums, taxes, late payment fees, penalties, and other ancillary charges are not modeled or included in this training simulation.",
-  "calculation_disclosure": "Monthly installment and repayment totals are illustrative calculations based on the stored offer terms. Monetary values are rounded to two decimal places. Final-installment adjustments and additional charges are not modeled.",
+  "calculation_disclosure": "Monthly installment and repayment totals are illustrative calculations based on the stored offer terms. Monetary values are rounded to two decimal places. In rare low-positive-APR cases, estimated repayment is floored at principal to prevent displaying negative estimated interest caused by cent rounding. Final-installment adjustments and additional charges are not modeled.",
   "training_disclosure": "This is a fictional software-training document only. It is not an actual credit offer, loan agreement, legal disclosure, or regulatory Key Facts Statement. No real lender or financial institution is involved."
 }
 ```
@@ -119,8 +119,10 @@ The KFS does not re-evaluate lender policies or recompute the initial EMI from e
 All calculations are performed using Python's `Decimal` type. Floating-point arithmetic (`float`) is strictly prohibited.
 
 ### Estimated Total Repayment
-$$\text{estimated\_total\_repayment} = \text{Offer.monthly\_installment} \times \text{Offer.term_months}$$
+$$\text{installment\_total} = \text{Offer.monthly\_installment} \times \text{Offer.term\_months}$$
+$$\text{estimated\_total\_repayment} = \max(\text{installment\_total}, \text{Offer.loan\_amount})$$
 - Quantized to `Decimal("0.01")` using `ROUND_HALF_UP`.
+- In rare low-positive-APR cases with long repayment tenures, rounding the monthly installment to cents can cause $\text{installment\_total}$ to evaluate slightly below principal. In such boundary conditions, estimated repayment is floored at principal ($\max$) to prevent displaying negative estimated interest.
 - Example: $₹9,984.82 \times 24 = ₹2,39,635.68$.
 
 ### Estimated Total Interest

@@ -10,6 +10,7 @@ from app.schemas.offer import (
     MockKFSResponse,
     OfferGenerationResponse,
     OfferResponse,
+    OfferSelectionResponse,
 )
 from app.services.offer_service import (
     ApplicationNotFoundError,
@@ -17,10 +18,12 @@ from app.services.offer_service import (
     OfferConsentConflictError,
     OfferMatchRunConflictError,
     OfferNotFoundError,
+    OfferSelectionConflictError,
     OfferStatusConflictError,
     generate_application_offers,
     get_mock_kfs_details,
     list_application_offers,
+    select_application_offer,
 )
 
 router = APIRouter()
@@ -147,4 +150,65 @@ def get_mock_kfs_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Offer not found.",
+        )
+
+
+@router.post(
+    "/{application_id}/offers/{offer_id}/select",
+    response_model=OfferSelectionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Select a mock loan offer for an application",
+)
+def select_offer_endpoint(
+    application_id: int,
+    offer_id: int,
+    current_user: User = Depends(require_customer),
+    db: Session = Depends(get_db),
+) -> OfferSelectionResponse:
+    """Select exactly one available loan offer for a matched loan application.
+
+    Enforces:
+    - Customer authentication and loan application ownership.
+    - Application status check ('matched' or idempotent 'offer_selected').
+    - Verification of active current-version consents (for new selection).
+    - Scopes selectable offer to latest completed match run with eligible decision and available status.
+    - Transitions selected offer to 'selected' and application to 'offer_selected'.
+    - Atomically withdraws other available offers for the application.
+    - Returns HTTP 200 with OfferSelectionResponse.
+    - Returns HTTP 404 if application or offer not found / not owned.
+    - Returns HTTP 409 for conflicts (application status, offer status, consent, or mismatch).
+    """
+    try:
+        return select_application_offer(
+            db=db,
+            customer_id=current_user.id,
+            application_id=application_id,
+            offer_id=offer_id,
+        )
+    except ApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan application not found.",
+        )
+    except OfferNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Offer not found.",
+        )
+    except (
+        OfferStatusConflictError,
+        OfferMatchRunConflictError,
+        OfferSelectionConflictError,
+    ) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
+    except OfferConsentConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "missing_purposes": exc.missing_purposes,
+            },
         )

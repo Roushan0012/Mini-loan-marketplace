@@ -212,3 +212,15 @@ class MockKFSResponse(BaseModel):
                 "provide a Decimal or exact numeric string."
             )
         return v
+
+
+class OfferSelectionResponse(BaseModel):
+    """Pydantic v2 schema representing the outcome of selecting a loan offer."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    application_id: int
+    application_status: Literal["offer_selected"] = "offer_selected"
+    selected_offer: OfferResponse
+    withdrawn_offer_count: int
+    selection_result: Literal["selected", "already_selected"]

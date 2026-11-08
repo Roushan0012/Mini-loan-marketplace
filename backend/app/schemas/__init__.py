@@ -32,6 +32,7 @@ from app.schemas.offer import (
     MockOfferTerms,
     OfferGenerationResponse,
     OfferResponse,
+    OfferSelectionResponse,
 )
 
 __all__ = [
@@ -56,4 +57,5 @@ __all__ = [
     "OfferResponse",
     "OfferGenerationResponse",
     "MockKFSResponse",
+    "OfferSelectionResponse",
 ]

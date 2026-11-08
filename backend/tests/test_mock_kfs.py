@@ -670,3 +670,38 @@ def test_reading_kfs_preserves_offer_and_creates_no_duplicates(
     assert db_session.query(Offer).count() == offer_count_before
     assert db_session.query(MatchRun).count() == run_count_before
     assert db_session.query(LenderDecision).count() == dec_count_before
+
+
+def test_kfs_low_positive_apr_rounding_regression(
+    client: TestClient,
+    db_session: Session,
+    setup_kfs_policies: None,
+    kfs_customer_a: Tuple[User, str],
+) -> None:
+    """Part B regression: Low-positive-APR with cent rounding floors repayment at principal, preventing negative interest."""
+    user, token = kfs_customer_a
+    app, run, offers = _create_matched_app_with_offers(db_session, user.id)
+
+    # Configure the exact boundary condition from Part B:
+    # Principal = 1000.90, APR = 0.0001, Tenure = 360, EMI = 2.78
+    target_offer = offers[0]
+    target_offer.loan_amount = Decimal("1000.90")
+    target_offer.apr = Decimal("0.0001")
+    target_offer.term_months = 360
+    target_offer.monthly_installment = Decimal("2.78")
+    db_session.commit()
+
+    response = client.get(
+        f"/api/v1/applications/{app.id}/offers/{target_offer.id}/kfs",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert Decimal(data["loan_amount"]) == Decimal("1000.90")
+    assert Decimal(data["monthly_installment"]) == Decimal("2.78")
+    assert data["term_months"] == 360
+    # 2.78 * 360 = 1000.80 < 1000.90, so repayment is floored at 1000.90 and interest is 0.00
+    assert Decimal(data["estimated_total_repayment"]) == Decimal("1000.90")
+    assert Decimal(data["estimated_total_interest"]) == Decimal("0.00")
+

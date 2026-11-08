@@ -1,5 +1,5 @@
 import logging
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select
@@ -15,6 +15,7 @@ from app.schemas.offer import (
     MockOfferTerms,
     OfferGenerationResponse,
     OfferResponse,
+    OfferSelectionResponse,
 )
 from app.services.application_service import get_customer_application
 from app.services.consent_service import (
@@ -67,6 +68,12 @@ class OfferNotFoundError(ValueError):
     pass
 
 
+class OfferSelectionConflictError(ValueError):
+    """Raised when an offer cannot be selected due to state, run, or availability conflicts."""
+
+    pass
+
+
 MOCK_KFS_DOCUMENT_TYPE = "TRAINING_ONLY_MOCK_KFS"
 MOCK_KFS_DOCUMENT_VERSION = "training-v1"
 MOCK_KFS_PAYMENT_FREQUENCY = "Monthly"
@@ -80,6 +87,8 @@ MOCK_KFS_FEE_DISCLOSURE = (
 MOCK_KFS_CALCULATION_DISCLOSURE = (
     "Monthly installment and repayment totals are illustrative calculations based on the "
     "stored offer terms. Monetary values are rounded to two decimal places. "
+    "In rare low-positive-APR cases, estimated repayment is floored at principal to prevent "
+    "displaying negative estimated interest caused by cent rounding. "
     "Final-installment adjustments and additional charges are not modeled."
 )
 
@@ -388,26 +397,29 @@ def get_mock_kfs_details(
     lender_code = policy.lender_code if policy else ""
     lender_name = policy.lender_name if policy else ""
 
-    stored_loan_amount = Decimal(str(offer.loan_amount)).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    stored_apr = Decimal(str(offer.apr))
-    stored_term_months = offer.term_months
-    stored_emi = Decimal(str(offer.monthly_installment)).quantize(
-        Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
-    number_of_installments = stored_term_months
+    with localcontext() as ctx:
+        ctx.prec = 35
+        stored_loan_amount = Decimal(str(offer.loan_amount)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        stored_apr = Decimal(str(offer.apr))
+        stored_term_months = offer.term_months
+        stored_emi = Decimal(str(offer.monthly_installment)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        number_of_installments = stored_term_months
 
-    if stored_apr > Decimal("0"):
-        estimated_total_repayment = (
-            stored_emi * Decimal(stored_term_months)
-        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        estimated_total_interest = (
-            estimated_total_repayment - stored_loan_amount
-        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    else:
-        estimated_total_interest = Decimal("0.00")
-        estimated_total_repayment = stored_loan_amount
+        if stored_apr > Decimal("0"):
+            installment_total = stored_emi * Decimal(stored_term_months)
+            estimated_total_repayment = max(
+                installment_total, stored_loan_amount
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            estimated_total_interest = (
+                estimated_total_repayment - stored_loan_amount
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        else:
+            estimated_total_interest = Decimal("0.00")
+            estimated_total_repayment = stored_loan_amount
 
     return MockKFSResponse(
         document_type=MOCK_KFS_DOCUMENT_TYPE,
@@ -434,3 +446,202 @@ def get_mock_kfs_details(
         calculation_disclosure=MOCK_KFS_CALCULATION_DISCLOSURE,
         training_disclosure=MOCK_KFS_TRAINING_DISCLOSURE,
     )
+
+
+def select_application_offer(
+    db: Session,
+    customer_id: int,
+    application_id: int,
+    offer_id: int,
+) -> OfferSelectionResponse:
+    """Select exactly one available loan offer for a matched loan application.
+
+    Enforces:
+    - Application row locking via SELECT FOR UPDATE.
+    - Application ownership verification (customer_id).
+    - Idempotent return if already selected.
+    - Application status check ('matched' or idempotent 'offer_selected').
+    - Verification of active current-version consents (for new selection).
+    - Presence and validity of latest completed match run.
+    - Scopes offer strictly to application_id and latest completed match run.
+    - Decision status must be 'eligible'.
+    - Offer status must be 'available'.
+    - Atomic transition: offer -> 'selected', application -> 'offer_selected'.
+    - Atomic withdrawal of other available offers for this application across all match runs.
+    - Full transaction rollback on any failure.
+    - Preserves historical records, decisions, match runs, and KFS accessibility.
+    """
+    try:
+        # 1. Lock and load application row using SELECT FOR UPDATE
+        app = (
+            db.query(LoanApplication)
+            .filter(
+                LoanApplication.id == application_id,
+                LoanApplication.customer_id == customer_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if app is None:
+            raise ApplicationNotFoundError(
+                f"Loan application {application_id} not found or not owned by customer."
+            )
+
+        # 2. Verify requested offer exists and belongs to this application
+        requested_offer = (
+            db.query(Offer)
+            .join(LenderDecision, Offer.lender_decision_id == LenderDecision.id)
+            .join(MatchRun, LenderDecision.match_run_id == MatchRun.id)
+            .options(
+                joinedload(Offer.lender_decision).joinedload(LenderDecision.lender_policy),
+                joinedload(Offer.lender_decision).joinedload(LenderDecision.match_run),
+            )
+            .filter(
+                Offer.id == offer_id,
+                MatchRun.application_id == application_id,
+            )
+            .first()
+        )
+        if requested_offer is None:
+            raise OfferNotFoundError(
+                f"Offer {offer_id} not found for loan application {application_id}."
+            )
+
+        # 3. Handle application state
+        if app.status == "offer_selected":
+            # Find the already selected offer for this application
+            already_selected = (
+                db.query(Offer)
+                .join(LenderDecision, Offer.lender_decision_id == LenderDecision.id)
+                .join(MatchRun, LenderDecision.match_run_id == MatchRun.id)
+                .options(
+                    joinedload(Offer.lender_decision).joinedload(LenderDecision.lender_policy),
+                    joinedload(Offer.lender_decision).joinedload(LenderDecision.match_run),
+                )
+                .filter(
+                    MatchRun.application_id == application_id,
+                    Offer.status == "selected",
+                )
+                .first()
+            )
+            if already_selected is not None and already_selected.id == requested_offer.id:
+                return OfferSelectionResponse(
+                    application_id=app.id,
+                    application_status="offer_selected",
+                    selected_offer=OfferResponse.model_validate(already_selected),
+                    withdrawn_offer_count=0,
+                    selection_result="already_selected",
+                )
+            raise OfferSelectionConflictError(
+                f"Application {application_id} already has a selected offer and cannot select offer {offer_id}."
+            )
+
+        if app.status != "matched":
+            raise OfferStatusConflictError(
+                f"Application {application_id} is in status '{app.status}' and cannot select offers."
+            )
+
+        # 4. Inconsistent state check: application is 'matched' but an offer is already marked 'selected'
+        existing_selected = (
+            db.query(Offer)
+            .join(LenderDecision, Offer.lender_decision_id == LenderDecision.id)
+            .join(MatchRun, LenderDecision.match_run_id == MatchRun.id)
+            .filter(
+                MatchRun.application_id == application_id,
+                Offer.status == "selected",
+            )
+            .first()
+        )
+        if existing_selected is not None:
+            raise OfferSelectionConflictError(
+                f"Application {application_id} is in status '{app.status}' but already has an offer marked as selected."
+            )
+
+        # 5. Retrieve latest MatchRun by run_number descending
+        latest_run = (
+            db.query(MatchRun)
+            .filter(MatchRun.application_id == application_id)
+            .order_by(MatchRun.run_number.desc())
+            .first()
+        )
+        if latest_run is None:
+            raise OfferMatchRunConflictError(
+                f"Application {application_id} does not have any match run."
+            )
+        if latest_run.status != "completed":
+            raise OfferMatchRunConflictError(
+                f"Latest match run {latest_run.id} for application {application_id} is in status '{latest_run.status}', not completed."
+            )
+
+        # 6. Verify requested Offer belongs to this exact latest completed MatchRun
+        if requested_offer.lender_decision.match_run_id != latest_run.id:
+            raise OfferSelectionConflictError(
+                f"Offer {offer_id} belongs to an older match run and is no longer selectable."
+            )
+
+        # 7. Verify lender decision is eligible
+        if requested_offer.lender_decision.decision_status != "eligible":
+            raise OfferSelectionConflictError(
+                f"Offer {offer_id} decision status is '{requested_offer.lender_decision.decision_status}', not eligible."
+            )
+
+        # 8. Check offer status (must be 'available')
+        if requested_offer.status != "available":
+            raise OfferSelectionConflictError(
+                f"Offer {offer_id} is in status '{requested_offer.status}' and cannot be selected."
+            )
+
+        # 9. Recheck active consent purposes
+        if not has_required_active_consents(db, app.id):
+            missing = get_missing_required_consents(db, app.id)
+            raise OfferConsentConflictError(
+                f"Active consent required for mandatory purposes. Missing/invalid: {missing}",
+                missing_purposes=missing,
+            )
+
+        # 10. Atomically update requested offer and application status
+        requested_offer.status = "selected"
+        app.status = "offer_selected"
+
+        # 11. Withdraw all other available offers for this application across all match runs
+        other_available_offers = (
+            db.query(Offer)
+            .join(LenderDecision, Offer.lender_decision_id == LenderDecision.id)
+            .join(MatchRun, LenderDecision.match_run_id == MatchRun.id)
+            .filter(
+                MatchRun.application_id == application_id,
+                Offer.id != requested_offer.id,
+                Offer.status == "available",
+            )
+            .all()
+        )
+        for o in other_available_offers:
+            o.status = "withdrawn"
+        withdrawn_count = len(other_available_offers)
+
+        # 12. Commit transaction
+        db.commit()
+        db.refresh(requested_offer)
+        db.refresh(app)
+
+        return OfferSelectionResponse(
+            application_id=app.id,
+            application_status="offer_selected",
+            selected_offer=OfferResponse.model_validate(requested_offer),
+            withdrawn_offer_count=withdrawn_count,
+            selection_result="selected",
+        )
+
+    except (
+        ApplicationNotFoundError,
+        OfferNotFoundError,
+        OfferStatusConflictError,
+        OfferMatchRunConflictError,
+        OfferSelectionConflictError,
+        OfferConsentConflictError,
+    ):
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise

@@ -37,6 +37,7 @@ TEST_CONSENT_EMAIL_PREFIX = "pytest_consent_"
 TEST_MATCHING_EMAIL_PREFIX = "pytest_matching_"
 TEST_OFFER_EMAIL_PREFIX = "pytest_offer_"
 TEST_KFS_EMAIL_PREFIX = "pytest_kfs_"
+TEST_SELECT_EMAIL_PREFIX = "pytest_select_"
 
 
 @pytest.fixture(scope="session")
@@ -66,6 +67,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
         | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
         | User.email.startswith(TEST_KFS_EMAIL_PREFIX)
+        | User.email.startswith(TEST_SELECT_EMAIL_PREFIX)
     )
 
     test_app_subquery = session.query(LoanApplication.id).filter(
@@ -140,6 +142,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
         | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
         | User.email.startswith(TEST_KFS_EMAIL_PREFIX)
+        | User.email.startswith(TEST_SELECT_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()
