@@ -13,6 +13,11 @@ from app.schemas.auth import (
     UserPublicResponse,
     UserRegisterRequest,
 )
+from app.schemas.consent import (
+    ConsentGrantRequest,
+    ConsentNoticeResponse,
+    ConsentResponse,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -24,4 +29,7 @@ __all__ = [
     "LoanApplicationCreate",
     "LoanApplicationUpdate",
     "LoanApplicationResponse",
+    "ConsentNoticeResponse",
+    "ConsentGrantRequest",
+    "ConsentResponse",
 ]

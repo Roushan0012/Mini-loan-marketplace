@@ -20,6 +20,7 @@ get_settings.cache_clear()
 from app.core.security import create_access_token, hash_password
 from app.db.session import SessionLocal
 from app.main import app
+from app.models.consent import Consent
 from app.models.lead import Lead
 from app.models.lead_assignment import LeadAssignment
 from app.models.loan_application import LoanApplication
@@ -29,6 +30,7 @@ TEST_EMAIL_PREFIX = "pytest_auth_"
 TEST_RBAC_EMAIL_PREFIX = "pytest_rbac_"
 TEST_RBAC_REF_PREFIX = "pytest_rbac_"
 TEST_APP_EMAIL_PREFIX = "pytest_app_"
+TEST_CONSENT_EMAIL_PREFIX = "pytest_consent_"
 
 
 @pytest.fixture(scope="session")
@@ -50,7 +52,23 @@ def db_session() -> Generator[Session, None, None]:
 
 def _clean_all_test_records(session: Session) -> None:
     """Safely delete test records in foreign-key-safe order."""
-    # 1. Lead assignments
+    # 1. Consents linked to test applications
+    session.query(Consent).filter(
+        Consent.application_id.in_(
+            session.query(LoanApplication.id).filter(
+                LoanApplication.customer_id.in_(
+                    session.query(User.id).filter(
+                        User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
+                        | User.email.startswith(TEST_EMAIL_PREFIX)
+                        | User.email.startswith(TEST_APP_EMAIL_PREFIX)
+                        | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
+                    )
+                )
+            )
+        )
+    ).delete(synchronize_session=False)
+
+    # 2. Lead assignments
     session.query(LeadAssignment).filter(
         LeadAssignment.lead_id.in_(
             session.query(Lead.id).filter(
@@ -67,13 +85,14 @@ def _clean_all_test_records(session: Session) -> None:
         )
     ).delete(synchronize_session=False)
 
-    # 2. Loan applications created by test users or for test leads
+    # 3. Loan applications created by test users or for test leads
     session.query(LoanApplication).filter(
         LoanApplication.customer_id.in_(
             session.query(User.id).filter(
                 User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
                 | User.email.startswith(TEST_EMAIL_PREFIX)
                 | User.email.startswith(TEST_APP_EMAIL_PREFIX)
+                | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
             )
         )
     ).delete(synchronize_session=False)
@@ -86,16 +105,17 @@ def _clean_all_test_records(session: Session) -> None:
         )
     ).delete(synchronize_session=False)
 
-    # 3. Test leads
+    # 4. Test leads
     session.query(Lead).filter(
         Lead.synthetic_reference.startswith(TEST_RBAC_REF_PREFIX)
     ).delete(synchronize_session=False)
 
-    # 4. Test users (auth, rbac, and app)
+    # 5. Test users (auth, rbac, app, and consent)
     session.query(User).filter(
         User.email.startswith(TEST_EMAIL_PREFIX)
         | User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
         | User.email.startswith(TEST_APP_EMAIL_PREFIX)
+        | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()
@@ -205,6 +225,28 @@ def app_customer_b(db_session: Session) -> Tuple[User, str]:
         f"{TEST_APP_EMAIL_PREFIX}customer_b@example.com",
         "customer",
         "Test Application Customer B",
+    )
+
+
+@pytest.fixture
+def consent_customer_a(db_session: Session) -> Tuple[User, str]:
+    """Create test customer A for consent tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_CONSENT_EMAIL_PREFIX}customer_a@example.com",
+        "customer",
+        "Test Consent Customer A",
+    )
+
+
+@pytest.fixture
+def consent_customer_b(db_session: Session) -> Tuple[User, str]:
+    """Create test customer B for consent tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_CONSENT_EMAIL_PREFIX}customer_b@example.com",
+        "customer",
+        "Test Consent Customer B",
     )
 
 
