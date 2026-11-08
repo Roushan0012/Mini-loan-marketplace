@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from sqlalchemy import BigInteger, Boolean, DateTime, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
@@ -38,6 +38,9 @@ class LenderPolicy(Base):
 
     # Structured mock eligibility criteria (e.g. min_age, min_monthly_income, allowed_work_types)
     rules: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    # Versioned mock credit terms (e.g. apr_percent, term_months, max_loan_amount)
+    offer_terms: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Status and audit timestamps
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

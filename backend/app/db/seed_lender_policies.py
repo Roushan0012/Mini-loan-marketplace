@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.lender_policy import LenderPolicy
 from app.schemas.lender_policy import LenderPolicyRules
+from app.schemas.offer import MockOfferTerms
 
 INITIAL_LENDER_POLICIES: List[Dict[str, Any]] = [
     {
@@ -23,6 +24,11 @@ INITIAL_LENDER_POLICIES: List[Dict[str, Any]] = [
                 "self_employed",
             ],
         },
+        "offer_terms": {
+            "apr_percent": "18.0000",
+            "term_months": 24,
+            "max_loan_amount": "250000.00",
+        },
     },
     {
         "lender_code": "HORIZON_CREDIT",
@@ -35,6 +41,11 @@ INITIAL_LENDER_POLICIES: List[Dict[str, Any]] = [
             "allowed_work_types": [
                 "salaried",
             ],
+        },
+        "offer_terms": {
+            "apr_percent": "16.0000",
+            "term_months": 36,
+            "max_loan_amount": "300000.00",
         },
     },
     {
@@ -49,6 +60,11 @@ INITIAL_LENDER_POLICIES: List[Dict[str, Any]] = [
                 "salaried",
                 "self_employed",
             ],
+        },
+        "offer_terms": {
+            "apr_percent": "20.0000",
+            "term_months": 18,
+            "max_loan_amount": "150000.00",
         },
     },
 ]
@@ -98,6 +114,11 @@ def seed_lender_policies(
             expected_rules_model = LenderPolicyRules.model_validate(policy_def["rules"])
             expected_rules_dict = expected_rules_model.model_dump(mode="json")
 
+            expected_terms_dict = None
+            if "offer_terms" in policy_def and policy_def["offer_terms"] is not None:
+                expected_terms_model = MockOfferTerms.model_validate(policy_def["offer_terms"])
+                expected_terms_dict = expected_terms_model.model_dump(mode="json")
+
             # Check if record exists
             stmt = select(LenderPolicy).where(
                 LenderPolicy.lender_code == lender_code,
@@ -106,7 +127,7 @@ def seed_lender_policies(
             existing = db.execute(stmt).scalar_one_or_none()
 
             if existing is not None:
-                # Check for metadata, status, and rule mismatch
+                # Check for metadata, status, rules, and offer terms mismatch
                 expected_is_active = policy_def.get("is_active", True)
                 mismatch_reasons = []
                 if existing.lender_name != expected_name:
@@ -128,6 +149,24 @@ def seed_lender_policies(
                 except Exception as exc:
                     mismatch_reasons.append(f"existing rules invalid: {exc}")
 
+                if expected_terms_dict is not None:
+                    if existing.offer_terms is None:
+                        mismatch_reasons.append(
+                            "offer_terms mismatch (existing is None, expected offer terms configured)"
+                        )
+                    else:
+                        try:
+                            existing_terms_model = MockOfferTerms.model_validate(existing.offer_terms)
+                            existing_terms_dict = existing_terms_model.model_dump(mode="json")
+                            if existing_terms_dict != expected_terms_dict:
+                                mismatch_reasons.append(
+                                    f"offer_terms mismatch (existing: {existing_terms_dict}, expected: {expected_terms_dict})"
+                                )
+                        except Exception as exc:
+                            mismatch_reasons.append(f"existing offer_terms invalid: {exc}")
+                elif existing.offer_terms is not None:
+                    mismatch_reasons.append("offer_terms mismatch (existing has terms, expected None)")
+
                 if mismatch_reasons:
                     raise ValueError(
                         f"Seed mismatch for {lender_code} {policy_version}: {'; '.join(mismatch_reasons)}"
@@ -141,6 +180,7 @@ def seed_lender_policies(
                     lender_name=expected_name,
                     policy_version=policy_version,
                     rules=expected_rules_dict,
+                    offer_terms=expected_terms_dict,
                     is_active=policy_def.get("is_active", True),
                 )
                 db.add(new_policy)

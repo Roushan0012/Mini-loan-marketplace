@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.seed_lender_policies import INITIAL_LENDER_POLICIES, seed_lender_policies
 from app.models.lender_policy import LenderPolicy
 from app.schemas.lender_policy import ALLOWED_WORK_TYPES, LenderPolicyRules
+from app.schemas.offer import MockOfferTerms
 
 TEST_LENDER_CODES = ["APEX_FINANCIAL", "HORIZON_CREDIT", "STERLING_LOANS", "MISMATCH_LENDER"]
 
@@ -306,3 +307,220 @@ def test_mismatched_is_active_policy_causes_safe_failure(db_session: Session):
     )
     current = db_session.execute(stmt).scalar_one()
     assert current.is_active is False
+
+
+# ---------------------------------------------------------------------------
+# Step 9A: Mock Offer Terms & Policy Extension Tests
+# ---------------------------------------------------------------------------
+
+
+def test_valid_mock_offer_terms_parsing():
+    """17. Valid MockOfferTerms parses successfully with exact Decimal precision."""
+    terms = MockOfferTerms(
+        apr_percent=Decimal("18.0000"),
+        term_months=24,
+        max_loan_amount=Decimal("250000.00"),
+    )
+    assert terms.apr_percent == Decimal("18.0000")
+    assert terms.term_months == 24
+    assert terms.max_loan_amount == Decimal("250000.00")
+
+
+def test_invalid_apr_values_rejected():
+    """18. Invalid APR values are rejected."""
+    # Negative APR
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("-1.0000"),
+            term_months=24,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    # APR > 100
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("100.0001"),
+            term_months=24,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    # Float APR rejected
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=18.5,
+            term_months=24,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    # Too many decimal places (> 4)
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("18.12345"),
+            term_months=24,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+
+def test_invalid_term_months_rejected():
+    """19. Invalid term months values are rejected."""
+    # Zero term
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=0,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    # Negative term
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=-12,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    # Term > 360
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=361,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+
+def test_invalid_max_loan_amount_rejected():
+    """20. Invalid max_loan_amount values are rejected."""
+    # Zero amount
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=12,
+            max_loan_amount=Decimal("0.00"),
+        )
+
+    # Negative amount
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=12,
+            max_loan_amount=Decimal("-5000.00"),
+        )
+
+    # Float amount rejected
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=12,
+            max_loan_amount=250000.0,
+        )
+
+    # More than 2 decimal places
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("15.0000"),
+            term_months=12,
+            max_loan_amount=Decimal("250000.001"),
+        )
+
+
+def test_unknown_offer_terms_fields_rejected():
+    """21. Unknown fields in offer_terms payload are rejected."""
+    raw_payload = {
+        "apr_percent": "18.0000",
+        "term_months": 24,
+        "max_loan_amount": "250000.00",
+        "unexpected_extra_fee": "500.00",
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        MockOfferTerms.model_validate(raw_payload)
+    assert "extra_forbidden" in str(exc_info.value)
+
+
+def test_seed_config_includes_correct_offer_terms():
+    """22. Existing seed configuration defines valid offer_terms for all three lenders."""
+    terms_by_lender = {p["lender_code"]: p.get("offer_terms") for p in INITIAL_LENDER_POLICIES}
+
+    assert "APEX_FINANCIAL" in terms_by_lender
+    assert terms_by_lender["APEX_FINANCIAL"] == {
+        "apr_percent": "18.0000",
+        "term_months": 24,
+        "max_loan_amount": "250000.00",
+    }
+    MockOfferTerms.model_validate(terms_by_lender["APEX_FINANCIAL"])
+
+    assert "HORIZON_CREDIT" in terms_by_lender
+    assert terms_by_lender["HORIZON_CREDIT"] == {
+        "apr_percent": "16.0000",
+        "term_months": 36,
+        "max_loan_amount": "300000.00",
+    }
+    MockOfferTerms.model_validate(terms_by_lender["HORIZON_CREDIT"])
+
+    assert "STERLING_LOANS" in terms_by_lender
+    assert terms_by_lender["STERLING_LOANS"] == {
+        "apr_percent": "20.0000",
+        "term_months": 18,
+        "max_loan_amount": "150000.00",
+    }
+    MockOfferTerms.model_validate(terms_by_lender["STERLING_LOANS"])
+
+
+def test_repeated_seeding_skips_matching_offer_terms(db_session: Session):
+    """23. Repeated seeding skips matching offer terms without duplicating or modifying records."""
+    # First seed
+    res1 = seed_lender_policies(session=db_session, enforce_dev_guard=False)
+    assert len(res1) == 3
+    assert all(status == "inserted" for _, _, status in res1)
+
+    # Verify offer_terms stored in database
+    stmt = select(LenderPolicy).where(
+        LenderPolicy.lender_code == "APEX_FINANCIAL",
+        LenderPolicy.policy_version == "v1.0",
+    )
+    policy_db = db_session.execute(stmt).scalar_one()
+    assert policy_db.offer_terms == {
+        "apr_percent": "18.0000",
+        "term_months": 24,
+        "max_loan_amount": "250000.00",
+    }
+
+    # Second seed
+    res2 = seed_lender_policies(session=db_session, enforce_dev_guard=False)
+    assert len(res2) == 3
+    assert all(status == "skipped" for _, _, status in res2)
+
+
+def test_conflicting_offer_terms_trigger_safe_failure_without_overwrite(db_session: Session):
+    """24. Conflicting offer_terms trigger safe failure without overwriting existing policy."""
+    # Pre-insert APEX_FINANCIAL with different offer_terms
+    conflicting_policy = LenderPolicy(
+        lender_code="APEX_FINANCIAL",
+        lender_name="Apex Financial",
+        policy_version="v1.0",
+        rules={
+            "min_age": 21,
+            "min_monthly_income": "25000.00",
+            "allowed_work_types": ["salaried", "self_employed"],
+        },
+        offer_terms={
+            "apr_percent": "25.0000",  # Different from seed 18.0000
+            "term_months": 24,
+            "max_loan_amount": "250000.00",
+        },
+        is_active=True,
+    )
+    db_session.add(conflicting_policy)
+    db_session.commit()
+
+    with pytest.raises(ValueError) as exc_info:
+        seed_lender_policies(session=db_session, enforce_dev_guard=False)
+
+    assert "offer_terms mismatch" in str(exc_info.value)
+
+    # Verify existing record was NOT overwritten
+    stmt = select(LenderPolicy).where(
+        LenderPolicy.lender_code == "APEX_FINANCIAL",
+        LenderPolicy.policy_version == "v1.0",
+    )
+    current = db_session.execute(stmt).scalar_one()
+    assert current.offer_terms["apr_percent"] == "25.0000"

@@ -74,27 +74,67 @@ def matching_admin(db_session: Session) -> Tuple[User, str]:
 
 
 def _clean_test_policies(db: Session) -> None:
-    """Safely delete test policies and any referencing decisions in foreign-key-safe order."""
-    policy_ids = [
-        p[0]
-        for p in db.query(LenderPolicy.id)
-        .filter(LenderPolicy.lender_code.in_(TEST_LENDER_CODES))
+    """Safely delete test policies and only decisions/runs belonging to matching test applications."""
+    # 1. Identify matching test user IDs
+    matching_user_ids = [
+        u[0]
+        for u in db.query(User.id)
+        .filter(User.email.startswith("pytest_matching_"))
         .all()
     ]
-    if policy_ids:
-        # 1. Delete lender decisions pointing to these policies
+
+    # 2. Identify loan applications owned by matching test users
+    matching_app_ids = (
+        [
+            a[0]
+            for a in db.query(LoanApplication.id)
+            .filter(LoanApplication.customer_id.in_(matching_user_ids))
+            .all()
+        ]
+        if matching_user_ids
+        else []
+    )
+
+    # 3. Identify match runs belonging only to matching test applications
+    matching_run_ids = (
+        [
+            r[0]
+            for r in db.query(MatchRun.id)
+            .filter(MatchRun.application_id.in_(matching_app_ids))
+            .all()
+        ]
+        if matching_app_ids
+        else []
+    )
+
+    # 4. Delete decisions belonging to these matching test runs
+    if matching_run_ids:
         db.query(LenderDecision).filter(
-            LenderDecision.lender_policy_id.in_(policy_ids)
+            LenderDecision.match_run_id.in_(matching_run_ids)
         ).delete(synchronize_session=False)
-        # 2. Delete match runs that have no decisions
-        db.query(MatchRun).filter(~MatchRun.decisions.any()).delete(
-            synchronize_session=False
-        )
-        # 3. Delete the policies
-        db.query(LenderPolicy).filter(LenderPolicy.id.in_(policy_ids)).delete(
-            synchronize_session=False
-        )
-        db.commit()
+
+        # 5. Delete only matching test runs
+        db.query(MatchRun).filter(
+            MatchRun.id.in_(matching_run_ids)
+        ).delete(synchronize_session=False)
+
+    # 6. Delete test policies only after checking their test decisions are removed
+    test_policies = (
+        db.query(LenderPolicy.id)
+        .filter(LenderPolicy.lender_code.in_(TEST_LENDER_CODES))
+        .all()
+    )
+    if test_policies:
+        p_ids = [p[0] for p in test_policies]
+        db.query(LenderDecision).filter(
+            LenderDecision.lender_policy_id.in_(p_ids)
+        ).delete(synchronize_session=False)
+
+        db.query(LenderPolicy).filter(
+            LenderPolicy.id.in_(p_ids)
+        ).delete(synchronize_session=False)
+
+    db.commit()
 
 
 @pytest.fixture
@@ -113,6 +153,11 @@ def setup_test_policies(db_session: Session) -> Generator[None, None, None]:
                 "min_monthly_income": "25000.00",
                 "allowed_work_types": ["salaried", "self_employed"],
             },
+            offer_terms={
+                "apr_percent": "18.0000",
+                "term_months": 24,
+                "max_loan_amount": "250000.00",
+            },
         ),
         LenderPolicy(
             lender_code="HORIZON_CREDIT",
@@ -124,6 +169,11 @@ def setup_test_policies(db_session: Session) -> Generator[None, None, None]:
                 "min_monthly_income": "30000.00",
                 "allowed_work_types": ["salaried"],
             },
+            offer_terms={
+                "apr_percent": "16.0000",
+                "term_months": 36,
+                "max_loan_amount": "300000.00",
+            },
         ),
         LenderPolicy(
             lender_code="STERLING_LOANS",
@@ -134,6 +184,11 @@ def setup_test_policies(db_session: Session) -> Generator[None, None, None]:
                 "min_age": 25,
                 "min_monthly_income": "40000.00",
                 "allowed_work_types": ["salaried", "self_employed"],
+            },
+            offer_terms={
+                "apr_percent": "20.0000",
+                "term_months": 18,
+                "max_loan_amount": "150000.00",
             },
         ),
     ]
@@ -1034,3 +1089,68 @@ def test_no_offers_are_created_by_matching_engine(
     # Verify zero records in offers table
     offers_count = db_session.query(Offer).count()
     assert offers_count == 0
+
+
+def test_unrelated_empty_match_run_is_retained_after_cleanup(db_session: Session):
+    """36. Verify that an unrelated empty MatchRun is retained after matching test cleanup."""
+    # Create an unrelated user (not matching pytest_matching_ prefix)
+    unrelated_user, _ = create_fictional_user(
+        db_session,
+        email="pytest_unrelated_customer@example.com",
+        role="customer",
+        full_name="Unrelated Customer",
+    )
+    unrelated_app = LoanApplication(
+        customer_id=unrelated_user.id,
+        age=30,
+        monthly_income=Decimal("50000.00"),
+        work_type="salaried",
+        requested_amount=Decimal("100000.00"),
+        status="draft",
+    )
+    db_session.add(unrelated_app)
+    db_session.commit()
+    db_session.refresh(unrelated_app)
+
+    # Consent for foreign key
+    consent = Consent(
+        application_id=unrelated_app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    db_session.add(consent)
+    db_session.commit()
+    db_session.refresh(consent)
+
+    # Empty match run without decisions
+    unrelated_run = MatchRun(
+        application_id=unrelated_app.id,
+        consent_id=consent.id,
+        run_number=1,
+        status="started",
+        started_at=datetime.now(timezone.utc),
+    )
+    db_session.add(unrelated_run)
+    db_session.commit()
+    db_session.refresh(unrelated_run)
+    run_id = unrelated_run.id
+
+    try:
+        # Run matching test policies cleanup
+        _clean_test_policies(db_session)
+
+        # Confirm the unrelated empty MatchRun was NOT deleted
+        db_run = db_session.get(MatchRun, run_id)
+        assert db_run is not None
+        assert db_run.id == run_id
+    finally:
+        # Clean up this unrelated test record safely
+        db_session.query(MatchRun).filter(MatchRun.id == run_id).delete(synchronize_session=False)
+        db_session.query(Consent).filter(Consent.id == consent.id).delete(synchronize_session=False)
+        db_session.query(LoanApplication).filter(LoanApplication.id == unrelated_app.id).delete(
+            synchronize_session=False
+        )
+        db_session.query(User).filter(User.id == unrelated_user.id).delete(synchronize_session=False)
+        db_session.commit()
