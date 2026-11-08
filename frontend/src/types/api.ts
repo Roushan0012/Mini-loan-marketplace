@@ -1,13 +1,6 @@
-export interface LoanApplication {
-  id: number;
-  age: number;
-  monthly_income: string;
-  work_type: string;
-  requested_amount: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
+export * from '../features/customer/types';
+export * from '../features/consents/types';
+export * from '../features/matching/types';
 
 export interface CallerLead {
   id: number;

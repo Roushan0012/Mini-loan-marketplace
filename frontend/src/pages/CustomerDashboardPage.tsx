@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { apiClient } from '../services/apiClient';
 import { LoanApplication } from '../types/api';
@@ -10,6 +11,7 @@ import { ApiError } from '../services/apiErrors';
 
 export const CustomerDashboardPage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [applications, setApplications] = useState<LoanApplication[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,7 @@ export const CustomerDashboardPage: React.FC = () => {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => alert('New loan application flow will be implemented in subsequent steps.')}
+            onClick={() => navigate('/customer/applications/new')}
           >
             + New Application
           </button>
@@ -100,7 +102,7 @@ export const CustomerDashboardPage: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={() => alert('New loan application flow will be implemented in subsequent steps.')}
+                onClick={() => navigate('/customer/applications/new')}
               >
                 Start First Application
               </button>
@@ -118,12 +120,25 @@ export const CustomerDashboardPage: React.FC = () => {
                   <th>Work Type</th>
                   <th>Status</th>
                   <th>Created</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {applications.map((app) => (
-                  <tr key={app.id}>
-                    <td style={{ fontWeight: 600 }}>#{app.id}</td>
+                  <tr
+                    key={app.id}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/customer/applications/${app.id}`)}
+                  >
+                    <td style={{ fontWeight: 600 }}>
+                      <Link
+                        to={`/customer/applications/${app.id}`}
+                        style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        #{app.id}
+                      </Link>
+                    </td>
                     <td style={{ fontWeight: 600 }}>
                       ₹{Number(app.requested_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </td>
@@ -137,6 +152,19 @@ export const CustomerDashboardPage: React.FC = () => {
                     </td>
                     <td style={{ color: 'var(--color-text-muted)' }}>
                       {new Date(app.created_at).toLocaleDateString()}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/customer/applications/${app.id}`);
+                        }}
+                      >
+                        View
+                      </button>
                     </td>
                   </tr>
                 ))}

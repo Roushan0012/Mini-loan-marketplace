@@ -4,6 +4,8 @@ import { GuestOnlyRoute, RoleRoute } from './routes/RouteGuards';
 import { LoginPage } from '../pages/LoginPage';
 import { RegisterPage } from '../pages/RegisterPage';
 import { CustomerDashboardPage } from '../pages/CustomerDashboardPage';
+import { CreateApplicationPage } from '../features/customer/pages/CreateApplicationPage';
+import { ApplicationDetailPage } from '../features/customer/pages/ApplicationDetailPage';
 import { CallerDashboardPage } from '../pages/CallerDashboardPage';
 import { AdminDashboardPage } from '../pages/AdminDashboardPage';
 import { UnauthorizedPage } from '../pages/UnauthorizedPage';
@@ -41,6 +43,22 @@ export const router = createBrowserRouter([
         element: (
           <RoleRoute allowedRoles={['customer']}>
             <CustomerDashboardPage />
+          </RoleRoute>
+        ),
+      },
+      {
+        path: 'customer/applications/new',
+        element: (
+          <RoleRoute allowedRoles={['customer']}>
+            <CreateApplicationPage />
+          </RoleRoute>
+        ),
+      },
+      {
+        path: 'customer/applications/:applicationId',
+        element: (
+          <RoleRoute allowedRoles={['customer']}>
+            <ApplicationDetailPage />
           </RoleRoute>
         ),
       },

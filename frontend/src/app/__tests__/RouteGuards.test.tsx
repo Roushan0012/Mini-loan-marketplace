@@ -49,6 +49,8 @@ describe('Route Guards and Role-Based Protection', () => {
 
             <Route element={<RoleRoute allowedRoles={['customer']} />}>
               <Route path="/customer/dashboard" element={<div>Customer Dashboard View</div>} />
+              <Route path="/customer/applications/new" element={<div>Create Application View</div>} />
+              <Route path="/customer/applications/:applicationId" element={<div>Application Detail View</div>} />
             </Route>
 
             <Route element={<RoleRoute allowedRoles={['caller']} />}>
@@ -116,5 +118,28 @@ describe('Route Guards and Role-Based Protection', () => {
     renderGuardedApp('/guest-welcome');
 
     expect(await screen.findByText('Customer Dashboard View')).toBeInTheDocument();
+  });
+
+  it('46. Customer can access application creation and detail views', async () => {
+    setupMockUser('customer');
+    const { unmount } = renderGuardedApp('/customer/applications/new');
+    expect(await screen.findByText('Create Application View')).toBeInTheDocument();
+    unmount();
+
+    renderGuardedApp('/customer/applications/42');
+    expect(await screen.findByText('Application Detail View')).toBeInTheDocument();
+  });
+
+  it('47 & 48. Caller and Admin cannot access customer application views', async () => {
+    // Caller blocked from customer application details
+    setupMockUser('caller');
+    const { unmount } = renderGuardedApp('/customer/applications/42');
+    expect(await screen.findByText('403 Unauthorized View')).toBeInTheDocument();
+    unmount();
+
+    // Admin blocked from customer application details
+    setupMockUser('admin');
+    renderGuardedApp('/customer/applications/42');
+    expect(await screen.findByText('403 Unauthorized View')).toBeInTheDocument();
   });
 });

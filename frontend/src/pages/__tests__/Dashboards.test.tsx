@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { CustomerDashboardPage } from '../CustomerDashboardPage';
 import { CallerDashboardPage } from '../CallerDashboardPage';
 import { AdminDashboardPage } from '../AdminDashboardPage';
@@ -51,14 +52,87 @@ describe('Role Dashboards Data Presentation', () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue(mockApplications);
 
     render(
-      <AuthContext.Provider value={createMockAuth(mockCustomer)}>
-        <CustomerDashboardPage />
-      </AuthContext.Provider>
+      <MemoryRouter>
+        <AuthContext.Provider value={createMockAuth(mockCustomer)}>
+          <CustomerDashboardPage />
+        </AuthContext.Provider>
+      </MemoryRouter>
     );
 
     expect(await screen.findByText(/Welcome back, Alice Customer!/i)).toBeInTheDocument();
     expect(await screen.findByText('#42')).toBeInTheDocument();
     expect(screen.getByText('submitted')).toBeInTheDocument();
+  });
+
+  it('15. Customer dashboard New Application action navigates to create form', async () => {
+    const mockCustomer: UserProfile = {
+      id: 101,
+      full_name: 'Alice Customer',
+      email: 'alice@example.com',
+      role: 'customer',
+      is_active: true,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={['/customer/dashboard']}>
+        <AuthContext.Provider value={createMockAuth(mockCustomer)}>
+          <Routes>
+            <Route path="/customer/dashboard" element={<CustomerDashboardPage />} />
+            <Route path="/customer/applications/new" element={<div>Create Form Destination</div>} />
+          </Routes>
+        </AuthContext.Provider>
+      </MemoryRouter>
+    );
+
+    const newAppBtn = await screen.findByRole('button', { name: /\+ New Application/i });
+    fireEvent.click(newAppBtn);
+    expect(await screen.findByText('Create Form Destination')).toBeInTheDocument();
+  });
+
+  it('16. Application rows navigate to the correct detail route', async () => {
+    const mockCustomer: UserProfile = {
+      id: 101,
+      full_name: 'Alice Customer',
+      email: 'alice@example.com',
+      role: 'customer',
+      is_active: true,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    };
+
+    const mockApplications: LoanApplication[] = [
+      {
+        id: 42,
+        age: 30,
+        monthly_income: '55000.00',
+        work_type: 'salaried',
+        requested_amount: '350000.00',
+        status: 'draft',
+        created_at: '2026-02-01T12:00:00Z',
+        updated_at: '2026-02-01T12:00:00Z',
+      },
+    ];
+
+    vi.spyOn(apiClient, 'get').mockResolvedValue(mockApplications);
+
+    render(
+      <MemoryRouter initialEntries={['/customer/dashboard']}>
+        <AuthContext.Provider value={createMockAuth(mockCustomer)}>
+          <Routes>
+            <Route path="/customer/dashboard" element={<CustomerDashboardPage />} />
+            <Route path="/customer/applications/:id" element={<div>Application 42 Detail Destination</div>} />
+          </Routes>
+        </AuthContext.Provider>
+      </MemoryRouter>
+    );
+
+    const viewBtn = await screen.findByRole('button', { name: /View/i });
+    fireEvent.click(viewBtn);
+    expect(await screen.findByText('Application 42 Detail Destination')).toBeInTheDocument();
   });
 
   it('19. Caller dashboard displays only API-assigned leads', async () => {

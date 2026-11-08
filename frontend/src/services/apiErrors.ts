@@ -28,6 +28,14 @@ export class ApiError extends Error {
       });
       return messages.join(', ');
     }
+    if (
+      this.detail &&
+      typeof this.detail === 'object' &&
+      'message' in this.detail &&
+      typeof (this.detail as { message: unknown }).message === 'string'
+    ) {
+      return (this.detail as { message: string }).message;
+    }
     if (typeof this.detail === 'string' && this.detail.trim().length > 0) {
       return this.detail;
     }

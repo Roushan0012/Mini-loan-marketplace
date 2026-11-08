@@ -208,10 +208,23 @@ Note: The backend service should be running separately on port 8000 before inter
 - **Backend Tests**:
   ```bash
   cd backend
-  pytest -v
+  .venv/bin/python -m pytest -v
   ```
+  Runs full test suite (310 tests covering auth, RBAC, applications, consents, matching, offers, submissions, webhooks, and CORS).
+
 - **Frontend Tests**:
   ```bash
   cd frontend
   npm test -- --run
   ```
+  Runs 56 Vitest unit and integration tests covering auth, route guards, dashboards, customer draft application lifecycle, versioned consent management, and multi-lender matching.
+
+---
+
+## 📚 Technical Documentation
+
+- [Customer Application & Matching Workflow](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/customer-application-workflow.md)
+- [Frontend Foundation & Architecture](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/frontend-foundation.md)
+- [Lending Workflow Lifecycle](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/workflow.md)
+- [Architecture & Verification Summary](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/architecture.md)
+

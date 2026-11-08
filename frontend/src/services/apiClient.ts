@@ -66,6 +66,13 @@ export async function apiRequest<T>(
             errorDetail = errorJson.detail;
             if (typeof errorJson.detail === 'string') {
               errorMessage = errorJson.detail;
+            } else if (
+              errorJson.detail &&
+              typeof errorJson.detail === 'object' &&
+              'message' in errorJson.detail &&
+              typeof (errorJson.detail as { message: unknown }).message === 'string'
+            ) {
+              errorMessage = (errorJson.detail as { message: string }).message;
             } else if (Array.isArray(errorJson.detail)) {
               errorMessage = errorJson.detail
                 .map((d: { msg?: string; loc?: string[] }) => d.msg || 'Validation error')
