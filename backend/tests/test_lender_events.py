@@ -1041,6 +1041,192 @@ def test_concurrency_serializes_and_prevents_duplicate_events(
     assert count == 1
 
 
+# --- 9B. Lifecycle Consistency & Concurrent Same-Sequence Tests (Step 12.1) ---
+
+
+def test_webhook_lifecycle_consistency_validation(
+    client: TestClient,
+    db_session: Session,
+    setup_event_policies: None,
+    event_customer_a: Tuple[User, str],
+) -> None:
+    """Step 12.1 Task B:
+    1. First event rejected when application.status is not submitted.
+    2. First event rejected when submission.status is not submitted.
+    3. Higher-sequence event rejected if application and submission statuses disagree.
+    4. Failed consistency validation creates no new LenderEvent.
+    5. Failed consistency validation leaves both statuses unchanged.
+    6. Higher-sequence correction still works when the current application and submission statuses agree.
+    """
+    user, _ = event_customer_a
+    app, offer, sub = _create_submitted_application(db_session, user.id)
+
+    # 1. First event rejected when application.status is not submitted
+    app.status = "matched"
+    db_session.commit()
+
+    b1, h1 = _build_signed_payload(sub, event_type="lender.accepted", sequence_number=1)
+    r1 = client.post("/api/v1/webhooks/mock-lenders/events", content=b1, headers=h1)
+    assert r1.status_code == 409
+    assert "expected both to be 'submitted'" in r1.json()["detail"]
+
+    # 4 & 5. Verify no event persisted, statuses unchanged
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == "matched"
+    assert sub.status == "submitted"
+    assert db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).count() == 0
+
+    # 2. First event rejected when submission.status is not submitted
+    app.status = "submitted"
+    sub.status = "declined"
+    db_session.commit()
+
+    r2 = client.post("/api/v1/webhooks/mock-lenders/events", content=b1, headers=h1)
+    assert r2.status_code == 409
+    assert "expected both to be 'submitted'" in r2.json()["detail"]
+
+    # Verify no event persisted, statuses unchanged
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == "submitted"
+    assert sub.status == "declined"
+    assert db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).count() == 0
+
+    # Reset both to 'submitted' and process sequence 1 successfully
+    sub.status = "submitted"
+    db_session.commit()
+
+    r1_valid = client.post("/api/v1/webhooks/mock-lenders/events", content=b1, headers=h1)
+    assert r1_valid.status_code == 200
+    assert r1_valid.json()["processing_status"] == "processed"
+    assert r1_valid.json()["submission_status"] == "accepted"
+    assert r1_valid.json()["application_status"] == "accepted"
+
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == "accepted"
+    assert sub.status == "accepted"
+    assert db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).count() == 1
+
+    # 3. Higher-sequence event rejected if application and submission statuses disagree
+    # Artificially desynchronize statuses
+    app.status = "declined"
+    db_session.commit()
+
+    b2, h2 = _build_signed_payload(sub, event_type="lender.failed", sequence_number=2)
+    r2_conflict = client.post("/api/v1/webhooks/mock-lenders/events", content=b2, headers=h2)
+    assert r2_conflict.status_code == 409
+    assert "disagrees with submission status" in r2_conflict.json()["detail"]
+
+    # 4 & 5. Verify no new event persisted, statuses left desynchronized without modification
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == "declined"
+    assert sub.status == "accepted"
+    assert db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).count() == 1
+
+    # 6. Higher-sequence correction works when current application and submission statuses agree
+    app.status = "accepted"
+    db_session.commit()
+
+    r2_valid = client.post("/api/v1/webhooks/mock-lenders/events", content=b2, headers=h2)
+    assert r2_valid.status_code == 200
+    assert r2_valid.json()["processing_status"] == "processed"
+    assert r2_valid.json()["submission_status"] == "failed"
+    assert r2_valid.json()["application_status"] == "failed"
+
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == "failed"
+    assert sub.status == "failed"
+    assert db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).count() == 2
+
+
+def test_true_concurrent_same_sequence_different_event_ids(
+    db_session: Session,
+    setup_event_policies: None,
+    event_customer_a: Tuple[User, str],
+) -> None:
+    """Step 12.1 Task C:
+    PostgreSQL integration test using separate database sessions and threads for:
+    - Same OfferSubmission
+    - Two different event IDs
+    - Same sequence number (1)
+    - Two different event outcomes (lender.accepted vs lender.declined)
+    - Using threading.Barrier so both deliveries start simultaneously
+    Expected result:
+    - Exactly one event has processing_status='processed'
+    - The other event has processing_status='ignored'
+    - Exactly one outcome is applied
+    - Both application.status and submission.status agree with that winner
+    - Both event IDs are preserved in the event history
+    - No duplicate event row exists
+    """
+    user, _ = event_customer_a
+    app, offer, sub = _create_submitted_application(db_session, user.id)
+
+    event_id_1 = f"evt_conc1_{uuid.uuid4()}"
+    event_id_2 = f"evt_conc2_{uuid.uuid4()}"
+    now = datetime.now(timezone.utc)
+
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def deliver_event(evt_id: str, evt_type: str) -> None:
+        local_session = SessionLocal()
+        try:
+            barrier.wait(timeout=5.0)
+            evt = MockLenderWebhookEvent(
+                event_id=evt_id,
+                submission_id=sub.id,
+                mock_reference=sub.mock_reference,
+                lender_code="APEX_FINANCIAL",
+                event_type=evt_type,
+                sequence_number=1,
+                occurred_at=now,
+            )
+            res = process_mock_lender_event(db=local_session, event=evt)
+            results.append(res)
+        except Exception as e:
+            errors.append(e)
+        finally:
+            local_session.close()
+
+    t1 = threading.Thread(target=deliver_event, args=(event_id_1, "lender.accepted"))
+    t2 = threading.Thread(target=deliver_event, args=(event_id_2, "lender.declined"))
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(errors) == 0, f"Encountered unexpected errors during concurrent delivery: {errors}"
+    assert len(results) == 2
+
+    # Exactly one processed and one ignored
+    statuses = [r.processing_status for r in results]
+    assert sorted(statuses) == ["ignored", "processed"]
+
+    # Identify the winning outcome
+    winner = next(r for r in results if r.processing_status == "processed")
+    winning_type = winner.event_type
+    expected_status = "accepted" if winning_type == "lender.accepted" else "declined"
+
+    # Both application.status and submission.status agree with that winner
+    db_session.refresh(app)
+    db_session.refresh(sub)
+    assert app.status == expected_status
+    assert sub.status == expected_status
+
+    # Both event IDs are preserved in the event history (exactly 2 events, no duplicate event row)
+    db_events = db_session.query(LenderEvent).filter(LenderEvent.submission_id == sub.id).all()
+    assert len(db_events) == 2
+    assert {e.event_id for e in db_events} == {event_id_1, event_id_2}
+    assert {e.processing_status for e in db_events} == {"processed", "ignored"}
+
+
 # --- 10. Test Cleanup Safety (Case 57) ---
 
 

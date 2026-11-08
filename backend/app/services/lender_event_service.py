@@ -182,11 +182,21 @@ def process_mock_lender_event(
                 received_at=ignored_event.received_at,
             )
 
-        # 8. First outcome validation: submission must be in 'submitted' status to receive first outcome
-        if max_processed_seq is None and locked_sub.status != "submitted":
-            raise LenderEventConflictError(
-                f"Submission {locked_sub.id} is in status '{locked_sub.status}', expected 'submitted' to receive first outcome."
-            )
+        # 8. Lifecycle consistency checks before applying a processed event
+        if max_processed_seq is None:
+            # First processed event requires both submission and application to be in 'submitted' status
+            if locked_sub.status != "submitted" or app.status != "submitted":
+                raise LenderEventConflictError(
+                    f"Cannot process first event: submission status is '{locked_sub.status}' "
+                    f"and application status is '{app.status}', expected both to be 'submitted'."
+                )
+        else:
+            # Later higher-sequence event requires application and submission statuses to agree
+            if app.status != locked_sub.status:
+                raise LenderEventConflictError(
+                    f"Cannot process higher-sequence event: application status '{app.status}' "
+                    f"disagrees with submission status '{locked_sub.status}'."
+                )
 
         # 9. Map event outcome to target statuses
         status_mapping = {
