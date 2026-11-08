@@ -1,3 +1,4 @@
+from typing import Optional
 from functools import lru_cache
 from pathlib import Path
 
@@ -21,6 +22,18 @@ INSECURE_JWT_PLACEHOLDERS = {
     "change-this-to-a-secure-jwt-secret-key-in-local-env",
 }
 
+INSECURE_WEBHOOK_PLACEHOLDERS = {
+    "",
+    "secret",
+    "webhook-secret",
+    "change-me",
+    "changethis",
+    "placeholder",
+    "your-secret-key",
+    "your-secret-key-here",
+    "change-this-to-a-secure-webhook-secret-key-in-local-env",
+}
+
 
 class Settings(BaseSettings):
     """Application, security, and PostgreSQL configuration settings."""
@@ -35,6 +48,9 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Mock Lender Webhook Configuration
+    MOCK_LENDER_WEBHOOK_SECRET: Optional[str] = None
 
     # PostgreSQL configuration
     POSTGRES_DB: str = "mini_loan_marketplace"
@@ -54,6 +70,20 @@ class Settings(BaseSettings):
         if trimmed.lower() in INSECURE_JWT_PLACEHOLDERS or len(trimmed) < 32:
             raise ValueError(
                 "JWT_SECRET_KEY cannot use insecure placeholders and must be at least 32 characters long."
+            )
+        return trimmed
+
+    @field_validator("MOCK_LENDER_WEBHOOK_SECRET")
+    @classmethod
+    def validate_webhook_secret(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        trimmed = v.strip()
+        if not trimmed:
+            return None
+        if trimmed.lower() in INSECURE_WEBHOOK_PLACEHOLDERS or len(trimmed) < 32:
+            raise ValueError(
+                "MOCK_LENDER_WEBHOOK_SECRET cannot use insecure placeholders and must be at least 32 characters long."
             )
         return trimmed
 

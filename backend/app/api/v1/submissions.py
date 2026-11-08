@@ -1,11 +1,15 @@
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.permissions import require_customer
 from app.db.session import get_db
+from app.models.lender_event import LenderEvent
+from app.models.loan_application import LoanApplication
+from app.models.offer_submission import OfferSubmission
 from app.models.user import User
+from app.schemas.lender_event import LenderEventHistoryItemResponse
 from app.schemas.offer import OfferSubmissionResponse
 from app.services.submission_service import (
     SubmissionAdapterError,
@@ -101,3 +105,58 @@ def submit_offer_endpoint(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         )
+
+
+@router.get(
+    "/{application_id}/submission/events",
+    response_model=List[LenderEventHistoryItemResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get webhook event audit history for an application submission",
+)
+def get_submission_events_endpoint(
+    application_id: int,
+    current_user: User = Depends(require_customer),
+    db: Session = Depends(get_db),
+) -> List[LenderEventHistoryItemResponse]:
+    """Retrieve all webhook events recorded for a customer's loan application submission.
+
+    Enforces:
+    - Customer authentication and loan application ownership.
+    - Returns 404 if application not found or not owned by the customer.
+    - Returns empty list if application has no submission yet.
+    - Deterministic ordering: sequence_number ASC, occurred_at ASC, id ASC.
+    - Sanitized event payload without secrets or raw customer PII.
+    """
+    app = (
+        db.query(LoanApplication)
+        .filter(
+            LoanApplication.id == application_id,
+            LoanApplication.customer_id == current_user.id,
+        )
+        .first()
+    )
+    if app is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan application not found.",
+        )
+
+    submission = (
+        db.query(OfferSubmission)
+        .filter(OfferSubmission.application_id == application_id)
+        .first()
+    )
+    if submission is None:
+        return []
+
+    events = (
+        db.query(LenderEvent)
+        .filter(LenderEvent.submission_id == submission.id)
+        .order_by(
+            LenderEvent.sequence_number.asc().nulls_last(),
+            LenderEvent.occurred_at.asc(),
+            LenderEvent.id.asc(),
+        )
+        .all()
+    )
+    return [LenderEventHistoryItemResponse.model_validate(e) for e in events]

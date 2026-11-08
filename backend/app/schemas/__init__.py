@@ -18,6 +18,11 @@ from app.schemas.consent import (
     ConsentNoticeResponse,
     ConsentResponse,
 )
+from app.schemas.lender_event import (
+    LenderEventHistoryItemResponse,
+    LenderEventResponse,
+    MockLenderWebhookEvent,
+)
 from app.schemas.lender_policy import (
     ALLOWED_WORK_TYPES,
     LenderPolicyRules,
@@ -60,4 +65,7 @@ __all__ = [
     "MockKFSResponse",
     "OfferSelectionResponse",
     "OfferSubmissionResponse",
+    "MockLenderWebhookEvent",
+    "LenderEventResponse",
+    "LenderEventHistoryItemResponse",
 ]
