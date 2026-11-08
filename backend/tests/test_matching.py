@@ -73,9 +73,60 @@ def matching_admin(db_session: Session) -> Tuple[User, str]:
     )
 
 
+CANONICAL_TEST_POLICIES = [
+    {
+        "lender_code": "APEX_FINANCIAL",
+        "lender_name": "Apex Financial",
+        "policy_version": "v1.0",
+        "is_active": True,
+        "rules": {
+            "min_age": 21,
+            "min_monthly_income": "25000.00",
+            "allowed_work_types": ["salaried", "self_employed"],
+        },
+        "offer_terms": {
+            "apr_percent": "18.0000",
+            "term_months": 24,
+            "max_loan_amount": "250000.00",
+        },
+    },
+    {
+        "lender_code": "HORIZON_CREDIT",
+        "lender_name": "Horizon Credit",
+        "policy_version": "v1.0",
+        "is_active": True,
+        "rules": {
+            "min_age": 23,
+            "min_monthly_income": "30000.00",
+            "allowed_work_types": ["salaried"],
+        },
+        "offer_terms": {
+            "apr_percent": "16.0000",
+            "term_months": 36,
+            "max_loan_amount": "300000.00",
+        },
+    },
+    {
+        "lender_code": "STERLING_LOANS",
+        "lender_name": "Sterling Loans",
+        "policy_version": "v1.0",
+        "is_active": True,
+        "rules": {
+            "min_age": 25,
+            "min_monthly_income": "40000.00",
+            "allowed_work_types": ["salaried", "self_employed"],
+        },
+        "offer_terms": {
+            "apr_percent": "20.0000",
+            "term_months": 18,
+            "max_loan_amount": "150000.00",
+        },
+    },
+]
+
+
 def _clean_test_policies(db: Session) -> None:
-    """Safely delete test policies and only decisions/runs belonging to matching test applications."""
-    # 1. Identify matching test user IDs
+    """Safely delete test records belonging only to matching test applications and users."""
     matching_user_ids = [
         u[0]
         for u in db.query(User.id)
@@ -83,121 +134,125 @@ def _clean_test_policies(db: Session) -> None:
         .all()
     ]
 
-    # 2. Identify loan applications owned by matching test users
-    matching_app_ids = (
-        [
+    if matching_user_ids:
+        matching_app_ids = [
             a[0]
             for a in db.query(LoanApplication.id)
             .filter(LoanApplication.customer_id.in_(matching_user_ids))
             .all()
         ]
-        if matching_user_ids
-        else []
-    )
 
-    # 3. Identify match runs belonging only to matching test applications
-    matching_run_ids = (
-        [
-            r[0]
-            for r in db.query(MatchRun.id)
-            .filter(MatchRun.application_id.in_(matching_app_ids))
-            .all()
-        ]
-        if matching_app_ids
-        else []
-    )
+        if matching_app_ids:
+            matching_run_ids = [
+                r[0]
+                for r in db.query(MatchRun.id)
+                .filter(MatchRun.application_id.in_(matching_app_ids))
+                .all()
+            ]
 
-    # 4. Delete decisions belonging to these matching test runs
-    if matching_run_ids:
-        db.query(LenderDecision).filter(
-            LenderDecision.match_run_id.in_(matching_run_ids)
-        ).delete(synchronize_session=False)
+            if matching_run_ids:
+                matching_dec_ids = [
+                    d[0]
+                    for d in db.query(LenderDecision.id)
+                    .filter(LenderDecision.match_run_id.in_(matching_run_ids))
+                    .all()
+                ]
 
-        # 5. Delete only matching test runs
-        db.query(MatchRun).filter(
-            MatchRun.id.in_(matching_run_ids)
-        ).delete(synchronize_session=False)
+                if matching_dec_ids:
+                    # 1. Delete offers belonging strictly to matching decisions
+                    db.query(Offer).filter(
+                        Offer.lender_decision_id.in_(matching_dec_ids)
+                    ).delete(synchronize_session=False)
 
-    # 6. Delete test policies only after checking their test decisions are removed
-    test_policies = (
-        db.query(LenderPolicy.id)
-        .filter(LenderPolicy.lender_code.in_(TEST_LENDER_CODES))
+                    # 2. Delete decisions belonging strictly to matching test runs
+                    db.query(LenderDecision).filter(
+                        LenderDecision.id.in_(matching_dec_ids)
+                    ).delete(synchronize_session=False)
+
+                # 3. Delete only matching test runs
+                db.query(MatchRun).filter(
+                    MatchRun.id.in_(matching_run_ids)
+                ).delete(synchronize_session=False)
+
+            # 4. Delete consents belonging to matching applications
+            db.query(Consent).filter(
+                Consent.application_id.in_(matching_app_ids)
+            ).delete(synchronize_session=False)
+
+            # 5. Delete matching applications
+            db.query(LoanApplication).filter(
+                LoanApplication.id.in_(matching_app_ids)
+            ).delete(synchronize_session=False)
+
+    # 6. Delete non-canonical temporary test policies (e.g., CORRUPT_LENDER or test-created extra versions)
+    # ONLY if no decisions reference them anywhere in the database.
+    canonical_codes = {c["lender_code"] for c in CANONICAL_TEST_POLICIES}
+    non_canonical_policies = (
+        db.query(LenderPolicy)
+        .filter(
+            (LenderPolicy.lender_code.notin_(canonical_codes))
+            | (LenderPolicy.policy_version != "v1.0")
+        )
         .all()
     )
-    if test_policies:
-        p_ids = [p[0] for p in test_policies]
-        db.query(LenderDecision).filter(
-            LenderDecision.lender_policy_id.in_(p_ids)
-        ).delete(synchronize_session=False)
-
-        db.query(LenderPolicy).filter(
-            LenderPolicy.id.in_(p_ids)
-        ).delete(synchronize_session=False)
+    for p in non_canonical_policies:
+        has_decision = (
+            db.query(LenderDecision.id)
+            .filter(LenderDecision.lender_policy_id == p.id)
+            .first()
+        )
+        if not has_decision:
+            db.delete(p)
 
     db.commit()
 
 
 @pytest.fixture
 def setup_test_policies(db_session: Session) -> Generator[None, None, None]:
-    """Insert three canonical test lender underwriting policies into isolated test database."""
+    """Ensure canonical test policies exist in isolated test database with canonical terms."""
     _clean_test_policies(db_session)
 
-    policies = [
-        LenderPolicy(
-            lender_code="APEX_FINANCIAL",
-            lender_name="Apex Financial",
-            policy_version="v1.0",
-            is_active=True,
-            rules={
-                "min_age": 21,
-                "min_monthly_income": "25000.00",
-                "allowed_work_types": ["salaried", "self_employed"],
-            },
-            offer_terms={
-                "apr_percent": "18.0000",
-                "term_months": 24,
-                "max_loan_amount": "250000.00",
-            },
-        ),
-        LenderPolicy(
-            lender_code="HORIZON_CREDIT",
-            lender_name="Horizon Credit",
-            policy_version="v1.0",
-            is_active=True,
-            rules={
-                "min_age": 23,
-                "min_monthly_income": "30000.00",
-                "allowed_work_types": ["salaried"],
-            },
-            offer_terms={
-                "apr_percent": "16.0000",
-                "term_months": 36,
-                "max_loan_amount": "300000.00",
-            },
-        ),
-        LenderPolicy(
-            lender_code="STERLING_LOANS",
-            lender_name="Sterling Loans",
-            policy_version="v1.0",
-            is_active=True,
-            rules={
-                "min_age": 25,
-                "min_monthly_income": "40000.00",
-                "allowed_work_types": ["salaried", "self_employed"],
-            },
-            offer_terms={
-                "apr_percent": "20.0000",
-                "term_months": 18,
-                "max_loan_amount": "150000.00",
-            },
-        ),
-    ]
-    db_session.add_all(policies)
+    # Upsert or restore canonical policies without deleting existing referenced records
+    for config in CANONICAL_TEST_POLICIES:
+        p = (
+            db_session.query(LenderPolicy)
+            .filter(
+                LenderPolicy.lender_code == config["lender_code"],
+                LenderPolicy.policy_version == config["policy_version"],
+            )
+            .first()
+        )
+        if p is None:
+            p = LenderPolicy(**config)
+            db_session.add(p)
+        else:
+            p.lender_name = config["lender_name"]
+            p.is_active = config["is_active"]
+            p.rules = config["rules"]
+            p.offer_terms = config["offer_terms"]
+
     db_session.commit()
 
     yield
 
     _clean_test_policies(db_session)
+
+    # Restore canonical state after test execution
+    for config in CANONICAL_TEST_POLICIES:
+        p = (
+            db_session.query(LenderPolicy)
+            .filter(
+                LenderPolicy.lender_code == config["lender_code"],
+                LenderPolicy.policy_version == config["policy_version"],
+            )
+            .first()
+        )
+        if p is not None:
+            p.lender_name = config["lender_name"]
+            p.is_active = config["is_active"]
+            p.rules = config["rules"]
+            p.offer_terms = config["offer_terms"]
+    db_session.commit()
 
 
 def _create_app_with_consents(
@@ -1153,4 +1208,80 @@ def test_unrelated_empty_match_run_is_retained_after_cleanup(db_session: Session
             synchronize_session=False
         )
         db_session.query(User).filter(User.id == unrelated_user.id).delete(synchronize_session=False)
+        db_session.commit()
+
+
+def test_unrelated_application_decisions_and_runs_preserved_after_cleanup(
+    db_session: Session,
+    setup_test_policies: None,
+) -> None:
+    """Part G Regression: Unrelated application's MatchRun and LenderDecision referencing canonical policy are preserved."""
+    unrelated_user, _ = create_fictional_user(
+        db_session,
+        email="pytest_unrelated_matching_user@example.com",
+        role="customer",
+        full_name="Unrelated Matching User",
+    )
+    unrelated_app = _create_app_with_consents(db_session, unrelated_user.id)
+
+    policy = (
+        db_session.query(LenderPolicy)
+        .filter(LenderPolicy.lender_code == "APEX_FINANCIAL")
+        .first()
+    )
+    assert policy is not None
+
+    consent = (
+        db_session.query(Consent)
+        .filter(Consent.application_id == unrelated_app.id)
+        .first()
+    )
+    assert consent is not None
+
+    unrelated_run = MatchRun(
+        application_id=unrelated_app.id,
+        consent_id=consent.id,
+        run_number=1,
+        status="completed",
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+    )
+    db_session.add(unrelated_run)
+    db_session.commit()
+    db_session.refresh(unrelated_run)
+
+    unrelated_decision = LenderDecision(
+        match_run_id=unrelated_run.id,
+        lender_policy_id=policy.id,
+        policy_version_snapshot="v1.0",
+        decision_status="eligible",
+        evaluated_at=datetime.now(timezone.utc),
+    )
+    db_session.add(unrelated_decision)
+    db_session.commit()
+    db_session.refresh(unrelated_decision)
+
+    dec_id = unrelated_decision.id
+    run_id = unrelated_run.id
+
+    try:
+        # Run cleanup helper
+        _clean_test_policies(db_session)
+
+        # Verify run and decision were NOT deleted
+        persisted_run = db_session.get(MatchRun, run_id)
+        assert persisted_run is not None
+        assert persisted_run.id == run_id
+
+        persisted_dec = db_session.get(LenderDecision, dec_id)
+        assert persisted_dec is not None
+        assert persisted_dec.id == dec_id
+        assert persisted_dec.lender_policy_id == policy.id
+    finally:
+        db_session.query(LenderDecision).filter(LenderDecision.id == dec_id).delete(synchronize_session=False)
+        db_session.query(MatchRun).filter(MatchRun.id == run_id).delete(synchronize_session=False)
+        db_session.query(Consent).filter(Consent.application_id == unrelated_app.id).delete(synchronize_session=False)
+        db_session.query(LoanApplication).filter(LoanApplication.id == unrelated_app.id).delete(synchronize_session=False)
+        db_session.query(User).filter(User.id == unrelated_user.id).delete(synchronize_session=False)
+        db_session.commit()
         db_session.commit()

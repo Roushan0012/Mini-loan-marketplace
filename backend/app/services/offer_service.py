@@ -1,5 +1,5 @@
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select
@@ -11,6 +11,7 @@ from app.models.loan_application import LoanApplication
 from app.models.match_run import MatchRun
 from app.models.offer import Offer
 from app.schemas.offer import (
+    MockKFSResponse,
     MockOfferTerms,
     OfferGenerationResponse,
     OfferResponse,
@@ -58,6 +59,35 @@ class OfferConfigurationError(RuntimeError):
     """Raised when lender offer terms configuration is missing, malformed, or mismatched."""
 
     pass
+
+
+class OfferNotFoundError(ValueError):
+    """Raised when an offer is not found or does not belong to the supplied loan application."""
+
+    pass
+
+
+MOCK_KFS_DOCUMENT_TYPE = "TRAINING_ONLY_MOCK_KFS"
+MOCK_KFS_DOCUMENT_VERSION = "training-v1"
+MOCK_KFS_PAYMENT_FREQUENCY = "Monthly"
+MOCK_KFS_AMORTIZATION_METHOD = "Monthly reducing-balance"
+
+MOCK_KFS_FEE_DISCLOSURE = (
+    "Processing fees, origination charges, insurance premiums, taxes, late payment fees, "
+    "penalties, and other ancillary charges are not modeled or included in this training simulation."
+)
+
+MOCK_KFS_CALCULATION_DISCLOSURE = (
+    "Monthly installment and repayment totals are illustrative calculations based on the "
+    "stored offer terms. Monetary values are rounded to two decimal places. "
+    "Final-installment adjustments and additional charges are not modeled."
+)
+
+MOCK_KFS_TRAINING_DISCLOSURE = (
+    "This is a fictional software-training document only. It is not an actual credit offer, "
+    "loan agreement, legal disclosure, or regulatory Key Facts Statement. "
+    "No real lender or financial institution is involved."
+)
 
 
 def generate_application_offers(
@@ -305,3 +335,102 @@ def list_application_offers(
     )
 
     return [OfferResponse.model_validate(o) for o in offers]
+
+
+def get_mock_kfs_details(
+    db: Session,
+    customer_id: int,
+    application_id: int,
+    offer_id: int,
+) -> MockKFSResponse:
+    """Retrieve Key Facts Statement (KFS) details for a specific loan offer.
+
+    Enforces:
+    - Application ownership verification.
+    - Verified relationship: Offer -> LenderDecision -> MatchRun -> LoanApplication.
+    - Scoped strictly to application_id and customer_id within the database query.
+    - Eager loading of LenderDecision, MatchRun, and LenderPolicy.
+    - Uses exact policy referenced by decision and decision.policy_version_snapshot.
+    - Read-only: does not modify or re-create offers, match runs, or decisions.
+    - Accurately computes estimated total repayment and interest using Decimal precision.
+    - Supports historical offers belonging to earlier completed match runs.
+    """
+    app = get_customer_application(db, customer_id=customer_id, application_id=application_id)
+    if app is None:
+        raise ApplicationNotFoundError(
+            f"Loan application {application_id} not found or not owned by customer."
+        )
+
+    stmt = (
+        select(Offer)
+        .join(Offer.lender_decision)
+        .join(LenderDecision.match_run)
+        .join(MatchRun.application)
+        .options(
+            joinedload(Offer.lender_decision).joinedload(LenderDecision.lender_policy),
+            joinedload(Offer.lender_decision).joinedload(LenderDecision.match_run),
+        )
+        .where(
+            Offer.id == offer_id,
+            LoanApplication.id == application_id,
+            LoanApplication.customer_id == customer_id,
+        )
+    )
+    offer = db.execute(stmt).scalar_one_or_none()
+    if offer is None:
+        raise OfferNotFoundError(
+            f"Offer {offer_id} not found for loan application {application_id}."
+        )
+
+    decision = offer.lender_decision
+    policy = decision.lender_policy if decision else None
+    policy_version = decision.policy_version_snapshot if decision else ""
+    lender_code = policy.lender_code if policy else ""
+    lender_name = policy.lender_name if policy else ""
+
+    stored_loan_amount = Decimal(str(offer.loan_amount)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    stored_apr = Decimal(str(offer.apr))
+    stored_term_months = offer.term_months
+    stored_emi = Decimal(str(offer.monthly_installment)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    number_of_installments = stored_term_months
+
+    if stored_apr > Decimal("0"):
+        estimated_total_repayment = (
+            stored_emi * Decimal(stored_term_months)
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        estimated_total_interest = (
+            estimated_total_repayment - stored_loan_amount
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        estimated_total_interest = Decimal("0.00")
+        estimated_total_repayment = stored_loan_amount
+
+    return MockKFSResponse(
+        document_type=MOCK_KFS_DOCUMENT_TYPE,
+        document_version=MOCK_KFS_DOCUMENT_VERSION,
+        mock_kfs_reference=offer.mock_kfs_reference,
+        offer_id=offer.id,
+        application_id=application_id,
+        lender_code=lender_code,
+        lender_name=lender_name,
+        policy_version=policy_version,
+        offer_status=offer.status,
+        offer_created_at=offer.created_at,
+        valid_until=offer.valid_until,
+        loan_amount=stored_loan_amount,
+        nominal_annual_apr_percent=stored_apr,
+        term_months=stored_term_months,
+        number_of_installments=number_of_installments,
+        payment_frequency=MOCK_KFS_PAYMENT_FREQUENCY,
+        monthly_installment=stored_emi,
+        estimated_total_repayment=estimated_total_repayment,
+        estimated_total_interest=estimated_total_interest,
+        amortization_method=MOCK_KFS_AMORTIZATION_METHOD,
+        fee_disclosure=MOCK_KFS_FEE_DISCLOSURE,
+        calculation_disclosure=MOCK_KFS_CALCULATION_DISCLOSURE,
+        training_disclosure=MOCK_KFS_TRAINING_DISCLOSURE,
+    )

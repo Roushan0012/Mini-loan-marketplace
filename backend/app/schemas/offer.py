@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -113,3 +113,102 @@ class OfferGenerationResponse(BaseModel):
     run_number: Optional[int] = None
     generated_count: int
     offers: List[OfferResponse]
+
+
+class MockKFSResponse(BaseModel):
+    """Pydantic v2 schema representing a Key Facts Statement (KFS) disclosure in the mock environment."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    # Document Identification
+    document_type: Literal["TRAINING_ONLY_MOCK_KFS"] = "TRAINING_ONLY_MOCK_KFS"
+    document_version: Literal["training-v1"] = "training-v1"
+    mock_kfs_reference: str
+    offer_id: int
+    application_id: int
+
+    # Lender Information
+    lender_code: str
+    lender_name: str
+    policy_version: str
+
+    # Offer Status
+    offer_status: str
+    offer_created_at: datetime
+    valid_until: Optional[datetime] = None
+
+    # Financial Information
+    loan_amount: Decimal = Field(
+        ...,
+        gt=Decimal("0.00"),
+        max_digits=12,
+        decimal_places=2,
+        description="Principal loan amount extended",
+    )
+    nominal_annual_apr_percent: Decimal = Field(
+        ...,
+        ge=Decimal("0.0000"),
+        le=Decimal("100.0000"),
+        max_digits=7,
+        decimal_places=4,
+        description="Nominal Annual Percentage Rate (APR)",
+    )
+    term_months: int = Field(
+        ...,
+        strict=True,
+        gt=0,
+        le=360,
+        description="Loan tenure in months",
+    )
+    number_of_installments: int = Field(
+        ...,
+        strict=True,
+        gt=0,
+        le=360,
+        description="Total number of scheduled monthly installments",
+    )
+    payment_frequency: str = "Monthly"
+    monthly_installment: Decimal = Field(
+        ...,
+        gt=Decimal("0.00"),
+        max_digits=12,
+        decimal_places=2,
+        description="Equated Monthly Installment (EMI)",
+    )
+    estimated_total_repayment: Decimal = Field(
+        ...,
+        gt=Decimal("0.00"),
+        max_digits=14,
+        decimal_places=2,
+        description="Estimated aggregate repayment over the full tenure",
+    )
+    estimated_total_interest: Decimal = Field(
+        ...,
+        ge=Decimal("0.00"),
+        max_digits=14,
+        decimal_places=2,
+        description="Estimated aggregate interest payable over the full tenure",
+    )
+    amortization_method: str = "Monthly reducing-balance"
+
+    # Disclosures
+    fee_disclosure: str
+    calculation_disclosure: str
+    training_disclosure: str
+
+    @field_validator(
+        "loan_amount",
+        "nominal_annual_apr_percent",
+        "monthly_installment",
+        "estimated_total_repayment",
+        "estimated_total_interest",
+        mode="before",
+    )
+    @classmethod
+    def reject_float(cls, v: Any) -> Any:
+        if isinstance(v, float):
+            raise ValueError(
+                "Floating-point values are not permitted for financial calculations; "
+                "provide a Decimal or exact numeric string."
+            )
+        return v

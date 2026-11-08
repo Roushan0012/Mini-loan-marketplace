@@ -6,14 +6,20 @@ from sqlalchemy.orm import Session
 from app.core.permissions import require_customer
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.offer import OfferGenerationResponse, OfferResponse
+from app.schemas.offer import (
+    MockKFSResponse,
+    OfferGenerationResponse,
+    OfferResponse,
+)
 from app.services.offer_service import (
     ApplicationNotFoundError,
     OfferConfigurationError,
     OfferConsentConflictError,
     OfferMatchRunConflictError,
+    OfferNotFoundError,
     OfferStatusConflictError,
     generate_application_offers,
+    get_mock_kfs_details,
     list_application_offers,
 )
 
@@ -101,4 +107,44 @@ def list_offers_endpoint(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Loan application not found.",
+        )
+
+
+@router.get(
+    "/{application_id}/offers/{offer_id}/kfs",
+    response_model=MockKFSResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Retrieve mock Key Facts Statement (KFS) disclosure for an offer",
+)
+def get_mock_kfs_endpoint(
+    application_id: int,
+    offer_id: int,
+    current_user: User = Depends(require_customer),
+    db: Session = Depends(get_db),
+) -> MockKFSResponse:
+    """Retrieve Key Facts Statement (KFS) details for a specific loan offer.
+
+    Enforces:
+    - Customer authentication and loan application ownership.
+    - Verified relationship: Offer -> LenderDecision -> MatchRun -> LoanApplication.
+    - Returns HTTP 200 with MockKFSResponse.
+    - Returns HTTP 404 if application not found, not owned, or offer does not belong to application.
+    - Preserves offer records without modification or duplication.
+    """
+    try:
+        return get_mock_kfs_details(
+            db=db,
+            customer_id=current_user.id,
+            application_id=application_id,
+            offer_id=offer_id,
+        )
+    except ApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan application not found.",
+        )
+    except OfferNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Offer not found.",
         )

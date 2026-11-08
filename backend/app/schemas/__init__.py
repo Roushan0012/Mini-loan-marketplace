@@ -28,6 +28,7 @@ from app.schemas.matching import (
     MatchRunSummaryResponse,
 )
 from app.schemas.offer import (
+    MockKFSResponse,
     MockOfferTerms,
     OfferGenerationResponse,
     OfferResponse,
@@ -54,4 +55,5 @@ __all__ = [
     "MockOfferTerms",
     "OfferResponse",
     "OfferGenerationResponse",
+    "MockKFSResponse",
 ]
