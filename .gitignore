@@ -70,6 +70,7 @@ lerna-debug.log*
 .npm
 .yarn/
 .vite/
+*.tsbuildinfo
 
 # Frontend Build
 frontend/dist/

@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
+    # CORS Origins (comma-separated string of permitted origins)
+    CORS_ORIGINS: str = (
+        "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
+    )
+
     # Mock Lender Webhook Configuration
     MOCK_LENDER_WEBHOOK_SECRET: Optional[str] = None
 
@@ -86,6 +91,13 @@ class Settings(BaseSettings):
                 "MOCK_LENDER_WEBHOOK_SECRET cannot use insecure placeholders and must be at least 32 characters long."
             )
         return trimmed
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse comma-separated CORS_ORIGINS into a clean list of allowed origins."""
+        if not self.CORS_ORIGINS:
+            return []
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     model_config = SettingsConfigDict(
         env_file=(str(ENV_FILE), ".env"),

@@ -173,4 +173,45 @@ Mini_Loan_Marketplace/
    cp .env.example .env
    ```
 
-*(Implementation of API endpoints, frontend components, and database migrations will follow in subsequent steps.)*
+### Running the Backend Service
+1. Navigate to the backend directory and set up the virtual environment:
+   ```bash
+   cd backend
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. Start the FastAPI development server:
+   ```bash
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+   The backend API will be available at `http://localhost:8000`.
+
+### Running the Frontend Service
+Note: The backend service should be running separately on port 8000 before interacting with the frontend.
+
+1. Navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
+2. Install frontend dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the Vite development server:
+   ```bash
+   npm run dev
+   ```
+   The frontend application will be accessible at `http://localhost:5173`.
+
+### Running Tests
+- **Backend Tests**:
+  ```bash
+  cd backend
+  pytest -v
+  ```
+- **Frontend Tests**:
+  ```bash
+  cd frontend
+  npm test -- --run
+  ```
