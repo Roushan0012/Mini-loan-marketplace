@@ -1,3 +1,7 @@
+from app.schemas.access import (
+    AdminDashboardSummary,
+    CallerLeadResponse,
+)
 from app.schemas.auth import (
     TokenResponse,
     UserLoginRequest,
@@ -10,4 +14,6 @@ __all__ = [
     "UserLoginRequest",
     "UserPublicResponse",
     "TokenResponse",
+    "CallerLeadResponse",
+    "AdminDashboardSummary",
 ]
