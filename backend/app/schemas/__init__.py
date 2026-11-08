@@ -18,6 +18,10 @@ from app.schemas.consent import (
     ConsentNoticeResponse,
     ConsentResponse,
 )
+from app.schemas.lender_policy import (
+    ALLOWED_WORK_TYPES,
+    LenderPolicyRules,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -32,4 +36,6 @@ __all__ = [
     "ConsentNoticeResponse",
     "ConsentGrantRequest",
     "ConsentResponse",
+    "LenderPolicyRules",
+    "ALLOWED_WORK_TYPES",
 ]

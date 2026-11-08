@@ -14,8 +14,10 @@ from app.services.consent_notices import (
     PURPOSE_SHARING_WITH_MOCK_LENDERS,
 )
 from app.services.consent_service import (
+    ALLOWED_CONSENT_APPLICATION_STATUSES,
     get_missing_required_consents,
     has_required_active_consents,
+    is_consent_change_permitted,
 )
 
 
@@ -891,3 +893,211 @@ def test_revocation_does_not_delete_consent_row(
     db_row = db_session.get(Consent, cid)
     assert db_row is not None
     assert db_row.status == "revoked"
+
+
+# ==============================================================================
+# Consent Readiness & Lifecycle Regression Tests (Step 8A Hardening)
+# ==============================================================================
+
+
+def test_multiple_granted_notice_versions_correctly_evaluates_readiness(
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """Multiple granted notice versions for one purpose: current version satisfies readiness regardless of older records."""
+    user, _ = consent_customer_a
+    app = _create_draft_application(db_session, user.id)
+
+    # Insert old granted version v0.9 and current granted version v1.0
+    c_old = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v0.9",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    c_current = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    c_other = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_SHARING_WITH_MOCK_LENDERS,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([c_old, c_current, c_other])
+    db_session.commit()
+
+    assert has_required_active_consents(db_session, app.id) is True
+    assert get_missing_required_consents(db_session, app.id) == []
+
+
+def test_old_version_does_not_satisfy_current_readiness_even_if_granted(
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """Old granted version does not satisfy current readiness when current version is missing."""
+    user, _ = consent_customer_a
+    app = _create_draft_application(db_session, user.id)
+
+    # Only old version v0.9 granted for eligibility_matching
+    c_old = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v0.9",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    c_other = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_SHARING_WITH_MOCK_LENDERS,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([c_old, c_other])
+    db_session.commit()
+
+    assert has_required_active_consents(db_session, app.id) is False
+    assert get_missing_required_consents(db_session, app.id) == [PURPOSE_ELIGIBILITY_MATCHING]
+
+
+def test_revoked_current_version_does_not_satisfy_readiness_despite_old_granted(
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """Revoked current notice version does not satisfy readiness, even if an older version was granted."""
+    user, _ = consent_customer_a
+    app = _create_draft_application(db_session, user.id)
+
+    # v0.9 granted, but v1.0 is revoked
+    c_old = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v0.9",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    c_revoked = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_ELIGIBILITY_MATCHING,
+        notice_version="v1.0",
+        status="revoked",
+        granted_at=datetime.now(timezone.utc),
+        revoked_at=datetime.now(timezone.utc),
+    )
+    c_other = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_SHARING_WITH_MOCK_LENDERS,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    db_session.add_all([c_old, c_revoked, c_other])
+    db_session.commit()
+
+    assert has_required_active_consents(db_session, app.id) is False
+    assert get_missing_required_consents(db_session, app.id) == [PURPOSE_ELIGIBILITY_MATCHING]
+
+
+def test_missing_purposes_accurately_reported(
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """Missing purposes appear in sorted order in get_missing_required_consents()."""
+    user, _ = consent_customer_a
+    app = _create_draft_application(db_session, user.id)
+
+    # Both missing
+    missing = get_missing_required_consents(db_session, app.id)
+    assert missing == [PURPOSE_ELIGIBILITY_MATCHING, PURPOSE_SHARING_WITH_MOCK_LENDERS]
+
+    # Grant only the second purpose
+    c2 = Consent(
+        application_id=app.id,
+        purpose=PURPOSE_SHARING_WITH_MOCK_LENDERS,
+        notice_version="v1.0",
+        status="granted",
+        granted_at=datetime.now(timezone.utc),
+    )
+    db_session.add(c2)
+    db_session.commit()
+
+    missing_after = get_missing_required_consents(db_session, app.id)
+    assert missing_after == [PURPOSE_ELIGIBILITY_MATCHING]
+
+
+def test_unknown_application_status_rejects_consent_modifications(
+    client: TestClient,
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """Unknown or unexpected application statuses strictly reject consent modification."""
+    user, token = consent_customer_a
+    app = _create_draft_application(db_session, user.id)
+
+    # Set an unknown status
+    app.status = "under_manual_review"
+    db_session.commit()
+
+    assert is_consent_change_permitted("under_manual_review") is False
+    assert is_consent_change_permitted("unknown_custom_status") is False
+
+    # Attempt to grant consent via API -> 409 Conflict
+    resp_grant = client.post(
+        f"/api/v1/applications/{app.id}/consents",
+        json={"purpose": PURPOSE_ELIGIBILITY_MATCHING, "notice_version": "v1.0", "accepted": True},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp_grant.status_code == 409
+
+
+def test_every_documented_pre_submission_status_allows_consent_changes(
+    client: TestClient,
+    db_session: Session,
+    consent_customer_a: Tuple[User, str],
+):
+    """All documented pre-submission states allow consent modifications."""
+    expected_allowed = {
+        "draft",
+        "matching",
+        "matched",
+        "offers_ready",
+        "offer_selected",
+    }
+    assert ALLOWED_CONSENT_APPLICATION_STATUSES == expected_allowed
+
+    user, token = consent_customer_a
+    for status in sorted(expected_allowed):
+        assert is_consent_change_permitted(status) is True
+
+        app = _create_draft_application(db_session, user.id)
+        app.status = status
+        db_session.commit()
+
+        # Successfully grant consent
+        resp = client.post(
+            f"/api/v1/applications/{app.id}/consents",
+            json={"purpose": PURPOSE_ELIGIBILITY_MATCHING, "notice_version": "v1.0", "accepted": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201
+
+
+def test_terminal_and_submitted_statuses_reject_consent_changes():
+    """All post-submission and terminal statuses reject consent modifications."""
+    terminal_statuses = [
+        "submitted",
+        "accepted",
+        "declined",
+        "finalized",
+        "timed_out",
+        "failed",
+    ]
+    for status in terminal_statuses:
+        assert is_consent_change_permitted(status) is False

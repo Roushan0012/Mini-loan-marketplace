@@ -12,6 +12,14 @@ from app.services.consent_notices import (
     is_valid_purpose,
 )
 
+ALLOWED_CONSENT_APPLICATION_STATUSES = {
+    "draft",
+    "matching",
+    "matched",
+    "offers_ready",
+    "offer_selected",
+}
+
 CLOSED_APPLICATION_STATUSES = {
     "submitted",
     "accepted",
@@ -37,11 +45,11 @@ class ConsentValidationError(ValueError):
 def is_consent_change_permitted(application_status: str) -> bool:
     """Determine whether consent grant or revoke operations are allowed for an application.
 
-    Consent modifications are permitted during all pre-submission lifecycle states
-    (e.g., 'draft', 'matching', 'matched', 'offers_ready', 'offer_selected').
-    Once an application is finalized or submitted, consent records are closed.
+    Consent modifications are permitted only during documented pre-submission lifecycle states
+    ('draft', 'matching', 'matched', 'offers_ready', 'offer_selected').
+    Submitted, finalized, terminal, and any unknown application states reject consent modifications.
     """
-    return application_status not in CLOSED_APPLICATION_STATUSES
+    return application_status in ALLOWED_CONSENT_APPLICATION_STATUSES
 
 
 def list_application_consents(
@@ -220,20 +228,19 @@ def has_required_active_consents(db: Session, application_id: int) -> bool:
     if not required:
         return True
 
-    active_consents = (
-        db.query(Consent)
-        .filter(
-            Consent.application_id == application_id,
-            Consent.status == "granted",
-        )
-        .all()
-    )
-
-    active_map = {c.purpose: c.notice_version for c in active_consents}
-
     for purpose in required:
         current_ver = get_current_version(purpose)
-        if purpose not in active_map or active_map[purpose] != current_ver:
+        record = (
+            db.query(Consent.id)
+            .filter(
+                Consent.application_id == application_id,
+                Consent.purpose == purpose,
+                Consent.notice_version == current_ver,
+                Consent.status == "granted",
+            )
+            .first()
+        )
+        if record is None:
             return False
 
     return True
@@ -242,21 +249,21 @@ def has_required_active_consents(db: Session, application_id: int) -> bool:
 def get_missing_required_consents(db: Session, application_id: int) -> List[str]:
     """Return a list of missing or inactive required consent purpose codes."""
     required = get_required_purposes()
-    active_consents = (
-        db.query(Consent)
-        .filter(
-            Consent.application_id == application_id,
-            Consent.status == "granted",
-        )
-        .all()
-    )
-
-    active_map = {c.purpose: c.notice_version for c in active_consents}
-
     missing: List[str] = []
+
     for purpose in sorted(required):
         current_ver = get_current_version(purpose)
-        if purpose not in active_map or active_map[purpose] != current_ver:
+        record = (
+            db.query(Consent.id)
+            .filter(
+                Consent.application_id == application_id,
+                Consent.purpose == purpose,
+                Consent.notice_version == current_ver,
+                Consent.status == "granted",
+            )
+            .first()
+        )
+        if record is None:
             missing.append(purpose)
 
     return missing
