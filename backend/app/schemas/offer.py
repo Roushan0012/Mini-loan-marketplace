@@ -224,3 +224,29 @@ class OfferSelectionResponse(BaseModel):
     selected_offer: OfferResponse
     withdrawn_offer_count: int
     selection_result: Literal["selected", "already_selected"]
+
+
+class OfferSubmissionResponse(BaseModel):
+    """Pydantic v2 schema representing the outcome of submitting an offer to a mock lender."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    application_id: int
+    offer_id: int
+    lender_code: str
+    lender_name: str
+    policy_version: str
+    status: Literal[
+        "pending",
+        "submitted",
+        "accepted",
+        "declined",
+        "timed_out",
+        "failed",
+    ]
+    mock_reference: Optional[str] = None
+    submitted_at: datetime
+    created_at: datetime
+    updated_at: datetime
+    submission_result: Literal["created", "replayed"]

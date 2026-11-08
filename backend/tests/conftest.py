@@ -24,9 +24,11 @@ from app.models.consent import Consent
 from app.models.lead import Lead
 from app.models.lead_assignment import LeadAssignment
 from app.models.lender_decision import LenderDecision
+from app.models.lender_event import LenderEvent
 from app.models.loan_application import LoanApplication
 from app.models.match_run import MatchRun
 from app.models.offer import Offer
+from app.models.offer_submission import OfferSubmission
 from app.models.user import User
 
 TEST_EMAIL_PREFIX = "pytest_auth_"
@@ -38,6 +40,7 @@ TEST_MATCHING_EMAIL_PREFIX = "pytest_matching_"
 TEST_OFFER_EMAIL_PREFIX = "pytest_offer_"
 TEST_KFS_EMAIL_PREFIX = "pytest_kfs_"
 TEST_SELECT_EMAIL_PREFIX = "pytest_select_"
+TEST_SUBMISSION_EMAIL_PREFIX = "pytest_sub_"
 
 
 @pytest.fixture(scope="session")
@@ -68,6 +71,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
         | User.email.startswith(TEST_KFS_EMAIL_PREFIX)
         | User.email.startswith(TEST_SELECT_EMAIL_PREFIX)
+        | User.email.startswith(TEST_SUBMISSION_EMAIL_PREFIX)
     )
 
     test_app_subquery = session.query(LoanApplication.id).filter(
@@ -77,6 +81,20 @@ def _clean_all_test_records(session: Session) -> None:
     test_run_subquery = session.query(MatchRun.id).filter(
         MatchRun.application_id.in_(test_app_subquery)
     )
+
+    # -2. Lender events linked to test submissions
+    session.query(LenderEvent).filter(
+        LenderEvent.submission_id.in_(
+            session.query(OfferSubmission.id).filter(
+                OfferSubmission.application_id.in_(test_app_subquery)
+            )
+        )
+    ).delete(synchronize_session=False)
+
+    # -1. Offer submissions linked to test applications
+    session.query(OfferSubmission).filter(
+        OfferSubmission.application_id.in_(test_app_subquery)
+    ).delete(synchronize_session=False)
 
     # 0. Offers linked to test decisions
     session.query(Offer).filter(
@@ -143,6 +161,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
         | User.email.startswith(TEST_KFS_EMAIL_PREFIX)
         | User.email.startswith(TEST_SELECT_EMAIL_PREFIX)
+        | User.email.startswith(TEST_SUBMISSION_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()
