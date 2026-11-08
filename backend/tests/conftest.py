@@ -23,7 +23,9 @@ from app.main import app
 from app.models.consent import Consent
 from app.models.lead import Lead
 from app.models.lead_assignment import LeadAssignment
+from app.models.lender_decision import LenderDecision
 from app.models.loan_application import LoanApplication
+from app.models.match_run import MatchRun
 from app.models.user import User
 
 TEST_EMAIL_PREFIX = "pytest_auth_"
@@ -31,6 +33,7 @@ TEST_RBAC_EMAIL_PREFIX = "pytest_rbac_"
 TEST_RBAC_REF_PREFIX = "pytest_rbac_"
 TEST_APP_EMAIL_PREFIX = "pytest_app_"
 TEST_CONSENT_EMAIL_PREFIX = "pytest_consent_"
+TEST_MATCHING_EMAIL_PREFIX = "pytest_matching_"
 
 
 @pytest.fixture(scope="session")
@@ -52,23 +55,38 @@ def db_session() -> Generator[Session, None, None]:
 
 def _clean_all_test_records(session: Session) -> None:
     """Safely delete test records in foreign-key-safe order."""
-    # 1. Consents linked to test applications
-    session.query(Consent).filter(
-        Consent.application_id.in_(
-            session.query(LoanApplication.id).filter(
-                LoanApplication.customer_id.in_(
-                    session.query(User.id).filter(
-                        User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
-                        | User.email.startswith(TEST_EMAIL_PREFIX)
-                        | User.email.startswith(TEST_APP_EMAIL_PREFIX)
-                        | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
-                    )
-                )
-            )
-        )
+    test_user_subquery = session.query(User.id).filter(
+        User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
+        | User.email.startswith(TEST_EMAIL_PREFIX)
+        | User.email.startswith(TEST_APP_EMAIL_PREFIX)
+        | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
+        | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
+    )
+
+    test_app_subquery = session.query(LoanApplication.id).filter(
+        LoanApplication.customer_id.in_(test_user_subquery)
+    )
+
+    test_run_subquery = session.query(MatchRun.id).filter(
+        MatchRun.application_id.in_(test_app_subquery)
+    )
+
+    # 1. Lender decisions linked to test match runs
+    session.query(LenderDecision).filter(
+        LenderDecision.match_run_id.in_(test_run_subquery)
     ).delete(synchronize_session=False)
 
-    # 2. Lead assignments
+    # 2. Match runs linked to test applications
+    session.query(MatchRun).filter(
+        MatchRun.application_id.in_(test_app_subquery)
+    ).delete(synchronize_session=False)
+
+    # 3. Consents linked to test applications
+    session.query(Consent).filter(
+        Consent.application_id.in_(test_app_subquery)
+    ).delete(synchronize_session=False)
+
+    # 4. Lead assignments
     session.query(LeadAssignment).filter(
         LeadAssignment.lead_id.in_(
             session.query(Lead.id).filter(
@@ -78,23 +96,12 @@ def _clean_all_test_records(session: Session) -> None:
     ).delete(synchronize_session=False)
 
     session.query(LeadAssignment).filter(
-        LeadAssignment.caller_id.in_(
-            session.query(User.id).filter(
-                User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
-            )
-        )
+        LeadAssignment.caller_id.in_(test_user_subquery)
     ).delete(synchronize_session=False)
 
-    # 3. Loan applications created by test users or for test leads
+    # 5. Loan applications created by test users or for test leads
     session.query(LoanApplication).filter(
-        LoanApplication.customer_id.in_(
-            session.query(User.id).filter(
-                User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
-                | User.email.startswith(TEST_EMAIL_PREFIX)
-                | User.email.startswith(TEST_APP_EMAIL_PREFIX)
-                | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
-            )
-        )
+        LoanApplication.customer_id.in_(test_user_subquery)
     ).delete(synchronize_session=False)
 
     session.query(LoanApplication).filter(
@@ -105,17 +112,18 @@ def _clean_all_test_records(session: Session) -> None:
         )
     ).delete(synchronize_session=False)
 
-    # 4. Test leads
+    # 6. Test leads
     session.query(Lead).filter(
         Lead.synthetic_reference.startswith(TEST_RBAC_REF_PREFIX)
     ).delete(synchronize_session=False)
 
-    # 5. Test users (auth, rbac, app, and consent)
+    # 7. Test users
     session.query(User).filter(
         User.email.startswith(TEST_EMAIL_PREFIX)
         | User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
         | User.email.startswith(TEST_APP_EMAIL_PREFIX)
         | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
+        | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()

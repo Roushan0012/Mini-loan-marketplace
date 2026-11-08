@@ -276,3 +276,33 @@ def test_safety_guard_rejects_non_dev_environment(db_session: Session):
     with pytest.raises(RuntimeError) as exc_info:
         seed_lender_policies(session=db_session, enforce_dev_guard=True)
     assert "Safety guard violation" in str(exc_info.value)
+
+
+def test_mismatched_is_active_policy_causes_safe_failure(db_session: Session):
+    """16. Existing policy with unexpected is_active causes safe failure without overwrite."""
+    deactivated_policy = LenderPolicy(
+        lender_code="APEX_FINANCIAL",
+        lender_name="Apex Financial",
+        policy_version="v1.0",
+        rules={
+            "min_age": 21,
+            "min_monthly_income": "25000.00",
+            "allowed_work_types": ["salaried", "self_employed"],
+        },
+        is_active=False,
+    )
+    db_session.add(deactivated_policy)
+    db_session.commit()
+
+    with pytest.raises(ValueError) as exc_info:
+        seed_lender_policies(session=db_session, enforce_dev_guard=False)
+
+    assert "is_active mismatch" in str(exc_info.value)
+
+    # Verify existing record was NOT modified or silently re-activated
+    stmt = select(LenderPolicy).where(
+        LenderPolicy.lender_code == "APEX_FINANCIAL",
+        LenderPolicy.policy_version == "v1.0",
+    )
+    current = db_session.execute(stmt).scalar_one()
+    assert current.is_active is False

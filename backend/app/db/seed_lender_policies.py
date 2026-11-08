@@ -106,11 +106,16 @@ def seed_lender_policies(
             existing = db.execute(stmt).scalar_one_or_none()
 
             if existing is not None:
-                # Check for metadata and rule mismatch
+                # Check for metadata, status, and rule mismatch
+                expected_is_active = policy_def.get("is_active", True)
                 mismatch_reasons = []
                 if existing.lender_name != expected_name:
                     mismatch_reasons.append(
                         f"lender_name mismatch (existing: '{existing.lender_name}', expected: '{expected_name}')"
+                    )
+                if existing.is_active != expected_is_active:
+                    mismatch_reasons.append(
+                        f"is_active mismatch (existing: {existing.is_active}, expected: {expected_is_active})"
                     )
 
                 try:

@@ -22,6 +22,11 @@ from app.schemas.lender_policy import (
     ALLOWED_WORK_TYPES,
     LenderPolicyRules,
 )
+from app.schemas.matching import (
+    LenderDecisionResponse,
+    MatchRunResponse,
+    MatchRunSummaryResponse,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -38,4 +43,7 @@ __all__ = [
     "ConsentResponse",
     "LenderPolicyRules",
     "ALLOWED_WORK_TYPES",
+    "LenderDecisionResponse",
+    "MatchRunResponse",
+    "MatchRunSummaryResponse",
 ]
