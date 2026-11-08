@@ -28,6 +28,7 @@ from app.models.user import User
 TEST_EMAIL_PREFIX = "pytest_auth_"
 TEST_RBAC_EMAIL_PREFIX = "pytest_rbac_"
 TEST_RBAC_REF_PREFIX = "pytest_rbac_"
+TEST_APP_EMAIL_PREFIX = "pytest_app_"
 
 
 @pytest.fixture(scope="session")
@@ -72,6 +73,7 @@ def _clean_all_test_records(session: Session) -> None:
             session.query(User.id).filter(
                 User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
                 | User.email.startswith(TEST_EMAIL_PREFIX)
+                | User.email.startswith(TEST_APP_EMAIL_PREFIX)
             )
         )
     ).delete(synchronize_session=False)
@@ -89,10 +91,11 @@ def _clean_all_test_records(session: Session) -> None:
         Lead.synthetic_reference.startswith(TEST_RBAC_REF_PREFIX)
     ).delete(synchronize_session=False)
 
-    # 4. Test users (both auth and rbac)
+    # 4. Test users (auth, rbac, and app)
     session.query(User).filter(
         User.email.startswith(TEST_EMAIL_PREFIX)
         | User.email.startswith(TEST_RBAC_EMAIL_PREFIX)
+        | User.email.startswith(TEST_APP_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()
@@ -180,6 +183,28 @@ def rbac_unassigned_caller(db_session: Session) -> Tuple[User, str]:
         f"{TEST_RBAC_EMAIL_PREFIX}unassigned_caller@example.com",
         "caller",
         "Test RBAC Unassigned Caller",
+    )
+
+
+@pytest.fixture
+def app_customer_a(db_session: Session) -> Tuple[User, str]:
+    """Create test customer A for application tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_APP_EMAIL_PREFIX}customer_a@example.com",
+        "customer",
+        "Test Application Customer A",
+    )
+
+
+@pytest.fixture
+def app_customer_b(db_session: Session) -> Tuple[User, str]:
+    """Create test customer B for application tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_APP_EMAIL_PREFIX}customer_b@example.com",
+        "customer",
+        "Test Application Customer B",
     )
 
 

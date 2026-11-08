@@ -2,6 +2,11 @@ from app.schemas.access import (
     AdminDashboardSummary,
     CallerLeadResponse,
 )
+from app.schemas.application import (
+    LoanApplicationCreate,
+    LoanApplicationResponse,
+    LoanApplicationUpdate,
+)
 from app.schemas.auth import (
     TokenResponse,
     UserLoginRequest,
@@ -16,4 +21,7 @@ __all__ = [
     "TokenResponse",
     "CallerLeadResponse",
     "AdminDashboardSummary",
+    "LoanApplicationCreate",
+    "LoanApplicationUpdate",
+    "LoanApplicationResponse",
 ]
