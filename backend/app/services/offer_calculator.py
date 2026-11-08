@@ -1,7 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP, getcontext
-
-# Set Decimal precision high enough for exact intermediate power and division steps
-getcontext().prec = 35
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 
 
 def calculate_monthly_installment(
@@ -55,15 +52,18 @@ def calculate_monthly_installment(
     if term_months < 1 or term_months > 360:
         raise ValueError(f"Term months must be between 1 and 360 inclusive, got {term_months}.")
 
-    if apr_percent == Decimal("0"):
-        emi = principal / Decimal(term_months)
-        return emi.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    with localcontext() as ctx:
+        ctx.prec = 35
 
-    r = apr_percent / Decimal("1200")
-    n = Decimal(term_months)
-    factor = (Decimal("1") + r) ** n
-    emi = principal * r * factor / (factor - Decimal("1"))
-    return emi.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if apr_percent == Decimal("0"):
+            emi = principal / Decimal(term_months)
+            return emi.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        r = apr_percent / Decimal("1200")
+        n = Decimal(term_months)
+        factor = (Decimal("1") + r) ** n
+        emi = principal * r * factor / (factor - Decimal("1"))
+        return emi.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def calculate_offer_amount(

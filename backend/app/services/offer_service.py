@@ -1,0 +1,307 @@
+import logging
+from decimal import Decimal
+from typing import List, Optional, Tuple
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session, joinedload
+
+from app.models.lender_decision import LenderDecision
+from app.models.lender_policy import LenderPolicy
+from app.models.loan_application import LoanApplication
+from app.models.match_run import MatchRun
+from app.models.offer import Offer
+from app.schemas.offer import (
+    MockOfferTerms,
+    OfferGenerationResponse,
+    OfferResponse,
+)
+from app.services.application_service import get_customer_application
+from app.services.consent_service import (
+    get_missing_required_consents,
+    has_required_active_consents,
+)
+from app.services.offer_calculator import (
+    calculate_monthly_installment,
+    calculate_offer_amount,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ApplicationNotFoundError(ValueError):
+    """Raised when an application is not found or not owned by the authenticated customer."""
+
+    pass
+
+
+class OfferStatusConflictError(ValueError):
+    """Raised when application lifecycle status is not 'matched'."""
+
+    pass
+
+
+class OfferConsentConflictError(ValueError):
+    """Raised when required consents are missing, revoked, or outdated."""
+
+    def __init__(self, message: str, missing_purposes: Optional[List[str]] = None):
+        super().__init__(message)
+        self.missing_purposes = missing_purposes or []
+
+
+class OfferMatchRunConflictError(ValueError):
+    """Raised when no match run exists or the latest match run is incomplete/failed."""
+
+    pass
+
+
+class OfferConfigurationError(RuntimeError):
+    """Raised when lender offer terms configuration is missing, malformed, or mismatched."""
+
+    pass
+
+
+def generate_application_offers(
+    db: Session,
+    customer_id: int,
+    application_id: int,
+) -> OfferGenerationResponse:
+    """Generate credit offers for all eligible lender decisions of the latest completed match run.
+
+    Enforces:
+    - Row-level locking on LoanApplication (SELECT ... FOR UPDATE).
+    - Application ownership verification.
+    - Application status check ('matched').
+    - Verification of active current-version consents.
+    - Retrieval of latest completed MatchRun.
+    - Pre-validation of offer terms across all eligible lenders before persistence.
+    - Idempotency: reuses existing offers without mutation or duplication.
+    - Single atomic database transaction.
+    """
+    try:
+        # 1. Lock and load the loan application
+        stmt = (
+            select(LoanApplication)
+            .where(
+                LoanApplication.id == application_id,
+                LoanApplication.customer_id == customer_id,
+            )
+            .with_for_update()
+        )
+        app = db.execute(stmt).scalar_one_or_none()
+
+        if app is None:
+            raise ApplicationNotFoundError(
+                f"Loan application {application_id} not found or not owned by customer."
+            )
+
+        # 2. Verify application status
+        if app.status != "matched":
+            raise OfferStatusConflictError(
+                f"Offers can only be generated when application status is 'matched', "
+                f"but application {application_id} is in status '{app.status}'."
+            )
+
+        # 3. Recheck both required current active consents
+        if not has_required_active_consents(db, app.id):
+            missing = get_missing_required_consents(db, app.id)
+            raise OfferConsentConflictError(
+                f"Offer generation requires active consent for all mandatory purposes. Missing: {missing}",
+                missing_purposes=missing,
+            )
+
+        # 4. Retrieve the latest MatchRun by run_number descending
+        latest_run = (
+            db.query(MatchRun)
+            .filter(MatchRun.application_id == app.id)
+            .order_by(MatchRun.run_number.desc())
+            .first()
+        )
+
+        if latest_run is None:
+            raise OfferMatchRunConflictError(
+                f"No match run found for application {application_id}. "
+                "Matching must be executed before generating offers."
+            )
+
+        if latest_run.status != "completed":
+            raise OfferMatchRunConflictError(
+                f"Latest match run {latest_run.id} (run #{latest_run.run_number}) is in status '{latest_run.status}'. "
+                "Offers can only be generated from a completed match run."
+            )
+
+        # 5. Retrieve decisions for that exact match run with LenderPolicy eagerly loaded
+        decisions = (
+            db.query(LenderDecision)
+            .options(
+                joinedload(LenderDecision.lender_policy),
+                joinedload(LenderDecision.offer),
+            )
+            .filter(LenderDecision.match_run_id == latest_run.id)
+            .all()
+        )
+
+        # 6. Consider only decisions with decision_status == 'eligible'
+        eligible_decisions = [d for d in decisions if d.decision_status == "eligible"]
+
+        if not eligible_decisions:
+            return OfferGenerationResponse(
+                application_id=app.id,
+                match_run_id=latest_run.id,
+                run_number=latest_run.run_number,
+                generated_count=0,
+                offers=[],
+            )
+
+        # 7. Pre-validate every eligible lender's offer configuration before inserting
+        validated_configs: List[Tuple[LenderDecision, LenderPolicy, MockOfferTerms]] = []
+        for decision in eligible_decisions:
+            policy = decision.lender_policy
+            if policy is None:
+                raise OfferConfigurationError(
+                    f"Lender decision {decision.id} references missing policy {decision.lender_policy_id}."
+                )
+
+            # Verify policy_version matches decision.policy_version_snapshot
+            if policy.policy_version != decision.policy_version_snapshot:
+                raise OfferConfigurationError(
+                    f"Policy version mismatch for lender {policy.lender_code}: "
+                    f"decision snapshot is '{decision.policy_version_snapshot}', "
+                    f"but policy record version is '{policy.policy_version}'."
+                )
+
+            # Validate offer_terms
+            if not policy.offer_terms:
+                raise OfferConfigurationError(
+                    f"Lender {policy.lender_code} policy version {policy.policy_version} "
+                    "is missing required 'offer_terms' configuration."
+                )
+
+            try:
+                terms = MockOfferTerms.model_validate(policy.offer_terms)
+            except Exception as exc:
+                raise OfferConfigurationError(
+                    f"Lender {policy.lender_code} offer_terms failed validation: {exc}"
+                ) from exc
+
+            validated_configs.append((decision, policy, terms))
+
+        # Sort configs deterministically by lender_code
+        validated_configs.sort(key=lambda item: item[1].lender_code)
+
+        offers_to_return: List[Offer] = []
+        generated_count = 0
+
+        # 8–10. Calculate terms and persist Offer records
+        app_requested = Decimal(str(app.requested_amount))
+
+        for decision, policy, terms in validated_configs:
+            # 11. Idempotency check: if an offer already exists, reuse it
+            if decision.offer is not None:
+                offers_to_return.append(decision.offer)
+                continue
+
+            existing_offer = (
+                db.query(Offer)
+                .filter(Offer.lender_decision_id == decision.id)
+                .first()
+            )
+            if existing_offer is not None:
+                offers_to_return.append(existing_offer)
+                continue
+
+            # Calculate offer amount as min(requested, policy_max)
+            offer_amount = calculate_offer_amount(app_requested, terms.max_loan_amount)
+
+            # Calculate monthly installment
+            emi = calculate_monthly_installment(
+                principal=offer_amount,
+                apr_percent=terms.apr_percent,
+                term_months=terms.term_months,
+            )
+
+            new_offer = Offer(
+                lender_decision_id=decision.id,
+                loan_amount=offer_amount,
+                apr=terms.apr_percent,
+                term_months=terms.term_months,
+                monthly_installment=emi,
+                mock_kfs_reference=f"TRAINING-MOCK-KFS-D{decision.id}",
+                status="available",
+                valid_until=None,
+            )
+            db.add(new_offer)
+            offers_to_return.append(new_offer)
+            generated_count += 1
+
+        # 12. Commit all new offers atomically
+        db.commit()
+
+        # Eagerly refresh all returned offers
+        for o in offers_to_return:
+            db.refresh(o)
+
+        return OfferGenerationResponse(
+            application_id=app.id,
+            match_run_id=latest_run.id,
+            run_number=latest_run.run_number,
+            generated_count=generated_count,
+            offers=[OfferResponse.model_validate(o) for o in offers_to_return],
+        )
+
+    except (
+        ApplicationNotFoundError,
+        OfferStatusConflictError,
+        OfferConsentConflictError,
+        OfferMatchRunConflictError,
+        OfferConfigurationError,
+    ):
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+def list_application_offers(
+    db: Session,
+    customer_id: int,
+    application_id: int,
+) -> List[OfferResponse]:
+    """Retrieve all credit offers belonging to the latest completed match run of an owned application.
+
+    Enforces:
+    - Application ownership verification.
+    - Scopes offers strictly to the latest completed MatchRun by run_number.
+    - Deterministic lender_code ordering.
+    - Eager loading of decision and policy relationships.
+    - Returns empty list if no match run exists or latest match run is not completed.
+    """
+    app = get_customer_application(db, customer_id=customer_id, application_id=application_id)
+    if app is None:
+        raise ApplicationNotFoundError(
+            f"Loan application {application_id} not found or not owned by customer."
+        )
+
+    latest_run = (
+        db.query(MatchRun)
+        .filter(MatchRun.application_id == application_id)
+        .order_by(MatchRun.run_number.desc())
+        .first()
+    )
+
+    if latest_run is None or latest_run.status != "completed":
+        return []
+
+    offers = (
+        db.query(Offer)
+        .join(LenderDecision, Offer.lender_decision_id == LenderDecision.id)
+        .join(LenderPolicy, LenderDecision.lender_policy_id == LenderPolicy.id)
+        .options(
+            joinedload(Offer.lender_decision).joinedload(LenderDecision.lender_policy)
+        )
+        .filter(LenderDecision.match_run_id == latest_run.id)
+        .order_by(LenderPolicy.lender_code.asc())
+        .all()
+    )
+
+    return [OfferResponse.model_validate(o) for o in offers]

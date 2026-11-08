@@ -1,6 +1,8 @@
-from decimal import Decimal
+from decimal import Decimal, getcontext
 import pytest
+from pydantic import ValidationError
 
+from app.schemas.offer import MockOfferTerms
 from app.services.offer_calculator import (
     calculate_monthly_installment,
     calculate_offer_amount,
@@ -174,3 +176,53 @@ def test_reject_invalid_offer_amounts():
             maximum_amount=Decimal("-1000.00"),
         )
     assert "Policy maximum loan amount must be positive" in str(exc2.value)
+
+
+def test_external_decimal_context_preserved():
+    """15. Calling the calculator does not alter caller's Decimal context precision."""
+    ctx = getcontext()
+    orig_prec = 14
+    ctx.prec = orig_prec
+
+    emi = calculate_monthly_installment(
+        principal=Decimal("200000.00"),
+        apr_percent=Decimal("18.0000"),
+        term_months=24,
+    )
+    assert emi == Decimal("9984.82")
+    # Verify external precision remains exactly what caller set
+    assert getcontext().prec == orig_prec
+
+
+def test_boolean_tenure_rejected_in_schema_and_calculator():
+    """16. Boolean values are rejected as tenure values in both schema and calculator."""
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("18.0000"),
+            term_months=True,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    with pytest.raises(ValidationError):
+        MockOfferTerms(
+            apr_percent=Decimal("18.0000"),
+            term_months=False,
+            max_loan_amount=Decimal("250000.00"),
+        )
+
+    with pytest.raises(ValueError):
+        calculate_monthly_installment(
+            principal=Decimal("100000.00"),
+            apr_percent=Decimal("15.0000"),
+            term_months=True,
+        )
+
+
+def test_valid_integer_tenure_continues_to_pass():
+    """17. Valid integer tenure values continue to pass."""
+    terms = MockOfferTerms(
+        apr_percent=Decimal("18.0000"),
+        term_months=24,
+        max_loan_amount=Decimal("250000.00"),
+    )
+    assert terms.term_months == 24

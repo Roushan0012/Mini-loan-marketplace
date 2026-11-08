@@ -10,6 +10,7 @@ from app.api.v1.consents import (
 )
 from app.api.v1.health import router as health_router
 from app.api.v1.matching import router as matching_router
+from app.api.v1.offers import router as offers_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
@@ -20,3 +21,4 @@ api_router.include_router(application_router, prefix="/applications", tags=["app
 api_router.include_router(consents_notices_router, prefix="/consents", tags=["consents"])
 api_router.include_router(application_consents_router, prefix="/applications", tags=["consents"])
 api_router.include_router(matching_router, prefix="/applications", tags=["matching"])
+api_router.include_router(offers_router, prefix="/applications", tags=["offers"])

@@ -27,7 +27,11 @@ from app.schemas.matching import (
     MatchRunResponse,
     MatchRunSummaryResponse,
 )
-from app.schemas.offer import MockOfferTerms
+from app.schemas.offer import (
+    MockOfferTerms,
+    OfferGenerationResponse,
+    OfferResponse,
+)
 
 __all__ = [
     "UserRegisterRequest",
@@ -48,4 +52,6 @@ __all__ = [
     "MatchRunResponse",
     "MatchRunSummaryResponse",
     "MockOfferTerms",
+    "OfferResponse",
+    "OfferGenerationResponse",
 ]

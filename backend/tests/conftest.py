@@ -26,6 +26,7 @@ from app.models.lead_assignment import LeadAssignment
 from app.models.lender_decision import LenderDecision
 from app.models.loan_application import LoanApplication
 from app.models.match_run import MatchRun
+from app.models.offer import Offer
 from app.models.user import User
 
 TEST_EMAIL_PREFIX = "pytest_auth_"
@@ -34,6 +35,7 @@ TEST_RBAC_REF_PREFIX = "pytest_rbac_"
 TEST_APP_EMAIL_PREFIX = "pytest_app_"
 TEST_CONSENT_EMAIL_PREFIX = "pytest_consent_"
 TEST_MATCHING_EMAIL_PREFIX = "pytest_matching_"
+TEST_OFFER_EMAIL_PREFIX = "pytest_offer_"
 
 
 @pytest.fixture(scope="session")
@@ -61,6 +63,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_APP_EMAIL_PREFIX)
         | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
         | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
+        | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
     )
 
     test_app_subquery = session.query(LoanApplication.id).filter(
@@ -70,6 +73,15 @@ def _clean_all_test_records(session: Session) -> None:
     test_run_subquery = session.query(MatchRun.id).filter(
         MatchRun.application_id.in_(test_app_subquery)
     )
+
+    # 0. Offers linked to test decisions
+    session.query(Offer).filter(
+        Offer.lender_decision_id.in_(
+            session.query(LenderDecision.id).filter(
+                LenderDecision.match_run_id.in_(test_run_subquery)
+            )
+        )
+    ).delete(synchronize_session=False)
 
     # 1. Lender decisions linked to test match runs
     session.query(LenderDecision).filter(
@@ -124,6 +136,7 @@ def _clean_all_test_records(session: Session) -> None:
         | User.email.startswith(TEST_APP_EMAIL_PREFIX)
         | User.email.startswith(TEST_CONSENT_EMAIL_PREFIX)
         | User.email.startswith(TEST_MATCHING_EMAIL_PREFIX)
+        | User.email.startswith(TEST_OFFER_EMAIL_PREFIX)
     ).delete(synchronize_session=False)
 
     session.commit()
@@ -255,6 +268,28 @@ def consent_customer_b(db_session: Session) -> Tuple[User, str]:
         f"{TEST_CONSENT_EMAIL_PREFIX}customer_b@example.com",
         "customer",
         "Test Consent Customer B",
+    )
+
+
+@pytest.fixture
+def offer_customer_a(db_session: Session) -> Tuple[User, str]:
+    """Create test customer A for offer tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_OFFER_EMAIL_PREFIX}customer_a@example.com",
+        "customer",
+        "Test Offer Customer A",
+    )
+
+
+@pytest.fixture
+def offer_customer_b(db_session: Session) -> Tuple[User, str]:
+    """Create test customer B for offer tests and return (User, token)."""
+    return create_fictional_user(
+        db_session,
+        f"{TEST_OFFER_EMAIL_PREFIX}customer_b@example.com",
+        "customer",
+        "Test Offer Customer B",
     )
 
 
