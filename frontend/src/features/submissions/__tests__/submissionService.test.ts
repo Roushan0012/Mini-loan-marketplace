@@ -51,6 +51,98 @@ describe('Submission Service & Idempotency Key Management', () => {
     expect(sessionStorage.getItem('mini-loan-marketplace:submission:42')).toBeNull();
   });
 
+  it('sessionStorage working: same key returned on repeated calls', () => {
+    clearSubmissionKey(101);
+    const key1 = getOrCreateSubmissionKey(101);
+    const key2 = getOrCreateSubmissionKey(101);
+    expect(key1).toBe(key2);
+    expect(sessionStorage.getItem('mini-loan-marketplace:submission:101')).toBe(key1);
+  });
+
+  it('sessionStorage getItem throwing: in-memory fallback key reused on retry', () => {
+    clearSubmissionKey(102);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError: The operation is insecure.');
+    });
+
+    const key1 = getOrCreateSubmissionKey(102);
+    expect(key1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+
+    // Repeated call/retry reuses fallback key
+    const key2 = getOrCreateSubmissionKey(102);
+    expect(key2).toBe(key1);
+  });
+
+  it('sessionStorage setItem throwing: in-memory fallback key reused on retry', () => {
+    clearSubmissionKey(103);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError: The quota has been exceeded.');
+    });
+
+    const key1 = getOrCreateSubmissionKey(103);
+    expect(key1).toBeTruthy();
+
+    // Repeated call/retry reuses fallback key
+    const key2 = getOrCreateSubmissionKey(103);
+    expect(key2).toBe(key1);
+  });
+
+  it('clearSubmissionKey removes in-memory fallback key', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('Storage access denied');
+    });
+
+    clearSubmissionKey(104);
+    const key1 = getOrCreateSubmissionKey(104);
+    expect(key1).toBeTruthy();
+
+    // After clearing, a new fallback key is generated
+    clearSubmissionKey(104);
+    const key2 = getOrCreateSubmissionKey(104);
+    expect(key2).toBeTruthy();
+    expect(key2).not.toBe(key1);
+  });
+
+  it('crypto.randomUUID is preferred where available', () => {
+    const mockUUID = '11111111-2222-4333-8444-555555555555';
+    const uuidSpy = vi.spyOn(crypto, 'randomUUID').mockReturnValue(mockUUID as `${string}-${string}-${string}-${string}-${string}`);
+
+    const key = generateSecureIdempotencyKey();
+    expect(key).toBe(mockUUID);
+    expect(uuidSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('crypto.getRandomValues fallback works when crypto.randomUUID is unavailable', () => {
+    const originalRandomUUID = crypto.randomUUID;
+    // Temporarily remove crypto.randomUUID
+    Object.defineProperty(crypto, 'randomUUID', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      const key = generateSecureIdempotencyKey();
+      expect(key).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      expect(key.length).toBe(36);
+    } finally {
+      Object.defineProperty(crypto, 'randomUUID', {
+        value: originalRandomUUID,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it('Math.random is never used for idempotency key generation', () => {
+    const mathSpy = vi.spyOn(Math, 'random');
+
+    generateSecureIdempotencyKey();
+    getOrCreateSubmissionKey(105);
+
+    expect(mathSpy).not.toHaveBeenCalled();
+  });
+
   it('27 & 28. submitSelectedOffer sends POST with empty body and Idempotency-Key header', async () => {
     const postSpy = vi.spyOn(apiClient, 'post').mockResolvedValue({
       id: 1,

@@ -6,6 +6,16 @@ import {
 } from '../types';
 
 /**
+ * Module-level in-memory fallback map for submission idempotency keys.
+ * Used when window.sessionStorage is unavailable, restricted, or throws an error (e.g. sandboxed iframes, disabled storage, quota exceeded).
+ *
+ * IMPORTANT LIMITATION:
+ * The in-memory fallback guarantees key reuse during the current JavaScript page lifetime.
+ * It cannot guarantee reuse after a full page reload when sessionStorage is completely unavailable.
+ */
+const inMemoryFallbackKeys = new Map<string, string>();
+
+/**
  * Generate a cryptographically secure UUID v4 string.
  * Strictly uses crypto.randomUUID() or crypto.getRandomValues(). Never uses Math.random().
  */
@@ -27,8 +37,31 @@ export function generateSecureIdempotencyKey(): string {
   throw new Error('Secure cryptographic random generator is not supported by this environment.');
 }
 
+/**
+ * Retrieve or generate an idempotency key for an application submission.
+ * Prefers sessionStorage to survive page reloads and retries.
+ * Falls back to an in-memory Map if sessionStorage is unavailable or throws.
+ *
+ * NOTE: The in-memory fallback guarantees key reuse across retry attempts within the current
+ * browser tab/page lifecycle, but cannot survive full page reloads if sessionStorage is disabled.
+ */
 export function getOrCreateSubmissionKey(applicationId: number | string): string {
   const storageKey = `mini-loan-marketplace:submission:${applicationId}`;
+
+  // If a fallback key was already generated for this session, reuse it
+  const existingFallback = inMemoryFallbackKeys.get(storageKey);
+  if (existingFallback && existingFallback.trim().length >= 8) {
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      if (!stored) {
+        sessionStorage.setItem(storageKey, existingFallback);
+      }
+    } catch {
+      // Ignore sessionStorage exceptions when syncing
+    }
+    return existingFallback.trim();
+  }
+
   try {
     const existingKey = sessionStorage.getItem(storageKey);
     if (existingKey && existingKey.trim().length >= 8) {
@@ -38,13 +71,23 @@ export function getOrCreateSubmissionKey(applicationId: number | string): string
     sessionStorage.setItem(storageKey, newKey);
     return newKey;
   } catch {
-    // If sessionStorage is restricted or disabled
-    return generateSecureIdempotencyKey();
+    // When sessionStorage.getItem or setItem fails (e.g. security sandbox, quota exceeded):
+    const fallbackKey = inMemoryFallbackKeys.get(storageKey);
+    if (fallbackKey && fallbackKey.trim().length >= 8) {
+      return fallbackKey.trim();
+    }
+    const newFallbackKey = generateSecureIdempotencyKey();
+    inMemoryFallbackKeys.set(storageKey, newFallbackKey);
+    return newFallbackKey;
   }
 }
 
+/**
+ * Remove the submission key for an application from both sessionStorage and in-memory fallback.
+ */
 export function clearSubmissionKey(applicationId: number | string): void {
   const storageKey = `mini-loan-marketplace:submission:${applicationId}`;
+  inMemoryFallbackKeys.delete(storageKey);
   try {
     sessionStorage.removeItem(storageKey);
   } catch {
