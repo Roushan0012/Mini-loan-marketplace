@@ -210,7 +210,7 @@ describe('Role Dashboards Data Presentation', () => {
 
     expect(await screen.findByText(/Administrator Monitoring: Admin Dave/i)).toBeInTheDocument();
     expect(screen.getByText('50')).toBeInTheDocument(); // total leads
-    expect(screen.getByText('35')).toBeInTheDocument(); // total applications
+    expect(screen.getAllByText('35').length).toBeGreaterThanOrEqual(1); // total applications
     expect(screen.getByText('84')).toBeInTheDocument(); // total offers
   });
 });

@@ -1,155 +1,226 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { apiClient } from '../services/apiClient';
-import { AdminMetrics } from '../types/api';
-import { Card } from '../components/ui/Card';
+import { adminMetricsService } from '../features/admin/services/adminMetricsService';
+import { AdminMetrics } from '../features/admin/types';
 import { LoadingSpinner } from '../components/feedback/LoadingSpinner';
 import { ErrorMessage } from '../components/feedback/ErrorMessage';
 import { ApiError } from '../services/apiErrors';
+import { AdminMetricCard } from '../features/admin/components/AdminMetricCard';
+import { AggregateStatusBreakdown } from '../features/admin/components/AggregateStatusBreakdown';
+import { AdminDataConsistencyNotice } from '../features/admin/components/AdminDataConsistencyNotice';
+import {
+  getApplicationCountConsistency,
+  getEventCountSummary,
+} from '../features/admin/utils/adminMetrics';
 
 export const AdminDashboardPage: React.FC = () => {
   const { user } = useAuth();
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
-  const fetchMetrics = async () => {
-    setIsLoading(true);
+  const fetchMetrics = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setError(null);
+
     try {
-      const data = await apiClient.get<AdminMetrics>('/admin/dashboard/metrics');
+      const data = await adminMetricsService.getAdminMetrics();
       setMetrics(data);
+      setLastRefreshedAt(new Date());
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.getFormattedMessage());
       } else {
-        setError('Failed to load administrative metrics.');
+        setError('Failed to load administrative aggregate metrics. Please check network connection.');
       }
+      // If a refresh failed, existing metrics snapshot is deliberately preserved!
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchMetrics();
-  }, []);
+    fetchMetrics(false);
+  }, [fetchMetrics]);
+
+  const consistency = useMemo(() => {
+    return getApplicationCountConsistency(metrics);
+  }, [metrics]);
+
+  const eventCountSummary = useMemo(() => {
+    return getEventCountSummary(metrics);
+  }, [metrics]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+      {/* SECTION 1 — Header */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '1rem',
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700 }}>
-            Administrator Monitoring: {user?.full_name}
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>
+            Administrator Analytics
           </h1>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+          <p style={{ fontWeight: 600, color: 'var(--color-text-main)', margin: '0.25rem 0' }}>
+            Administrator Monitoring: {user?.full_name}
+          </p>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', margin: 0 }}>
             System-wide aggregate telemetry &bull; Privacy-preserving monitoring without individual customer PII
           </p>
         </div>
         <button
           type="button"
           className="btn btn-outline"
-          onClick={fetchMetrics}
-          disabled={isLoading}
+          onClick={() => fetchMetrics(true)}
+          disabled={isLoading || isRefreshing}
+          aria-label="Refresh aggregate metrics"
         >
-          Refresh Metrics
+          {isRefreshing ? 'Refreshing...' : 'Refresh Metrics'}
         </button>
       </div>
 
-      <ErrorMessage message={error || undefined} onRetry={fetchMetrics} />
+      {/* Privacy Notice Banner */}
+      <div className="alert alert-info" style={{ fontSize: '0.8125rem', margin: 0 }}>
+        🔒 <strong>Privacy & Telemetry Guardrail:</strong> This dashboard displays aggregate platform metrics only. Individual customer records, application IDs, loan amounts, and personal data are strictly inaccessible here.
+      </div>
+
+      {/* Error Banners */}
+      {error && !metrics && (
+        <ErrorMessage message={error} onRetry={() => fetchMetrics(false)} />
+      )}
+
+      {error && metrics && (
+        <div
+          className="alert alert-warning"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            margin: 0,
+            borderLeft: '4px solid #f59e0b',
+          }}
+        >
+          <div>
+            <strong>⚠️ Metrics Refresh Notice:</strong> Failed to fetch updated data ({error}). Displaying preserved snapshot from {lastRefreshedAt?.toLocaleTimeString()}.
+          </div>
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={() => fetchMetrics(true)}
+            style={{ padding: '0.25rem 0.75rem', fontSize: '0.8125rem' }}
+          >
+            Retry Refresh
+          </button>
+        </div>
+      )}
 
       {isLoading ? (
         <LoadingSpinner message="Aggregating platform metrics..." />
       ) : metrics ? (
         <>
-          {/* Key Totals Grid */}
-          <div className="metrics-grid">
-            <div className="metric-card">
-              <span className="metric-label">Total Leads</span>
-              <span className="metric-value">{metrics.total_leads}</span>
-            </div>
-            <div className="metric-card">
-              <span className="metric-label">Total Applications</span>
-              <span className="metric-value">{metrics.total_applications}</span>
-            </div>
-            <div className="metric-card">
-              <span className="metric-label">Completed Match Runs</span>
-              <span className="metric-value">{metrics.total_match_runs}</span>
-            </div>
-            <div className="metric-card">
-              <span className="metric-label">Generated Offers</span>
-              <span className="metric-value">{metrics.total_offers}</span>
-            </div>
-            <div className="metric-card">
-              <span className="metric-label">Dispatched Submissions</span>
-              <span className="metric-value">{metrics.total_submissions}</span>
+          {/* SECTION 2 — Platform Totals */}
+          <div>
+            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+              Platform Pipeline Totals
+            </h2>
+            <div className="metrics-grid">
+              <AdminMetricCard
+                title="Total Leads"
+                value={metrics.total_leads}
+                description="Total prospective customer leads generated in system"
+              />
+              <AdminMetricCard
+                title="Total Applications"
+                value={metrics.total_applications}
+                description="Total loan applications initiated across all statuses"
+              />
+              <AdminMetricCard
+                title="Total Match Runs"
+                value={metrics.total_match_runs}
+                description="Total multi-lender policy matching executions"
+              />
+              <AdminMetricCard
+                title="Total Offers"
+                value={metrics.total_offers}
+                description="Total credit offers generated across all match runs"
+              />
+              <AdminMetricCard
+                title="Total Submissions"
+                value={metrics.total_submissions}
+                description="Total offer submissions dispatched to mock lenders"
+              />
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
-            {/* Applications by Status */}
-            <Card title="Applications by Status">
-              {Object.keys(metrics.applications_by_status).length === 0 ? (
-                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
-                  No application data recorded yet.
-                </p>
-              ) : (
-                <div className="table-responsive">
-                  <table className="data-table" aria-label="Applications breakdown by status">
-                    <thead>
-                      <tr>
-                        <th>Lifecycle Status</th>
-                        <th style={{ textAlign: 'right' }}>Count</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(metrics.applications_by_status).map(([status, count]) => (
-                        <tr key={status}>
-                          <td>
-                            <span className={`badge badge-status badge-${status}`}>
-                              {status.replace('_', ' ')}
-                            </span>
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
+          {/* SECTION 5 — Data Consistency */}
+          <AdminDataConsistencyNotice consistency={consistency} />
 
-            {/* Lender Events by Processing Status */}
-            <Card title="Lender Webhook Events by Status">
-              {Object.keys(metrics.lender_events_by_processing_status).length === 0 ? (
-                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
-                  No webhook events recorded yet.
-                </p>
-              ) : (
-                <div className="table-responsive">
-                  <table className="data-table" aria-label="Webhook events breakdown">
-                    <thead>
-                      <tr>
-                        <th>Processing Status</th>
-                        <th style={{ textAlign: 'right' }}>Count</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(metrics.lender_events_by_processing_status).map(([procStatus, count]) => (
-                        <tr key={procStatus}>
-                          <td>
-                            <span className="badge badge-status">
-                              {procStatus}
-                            </span>
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
+          {/* SECTION 3 & 4 — Breakdowns Grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+              gap: '1.5rem',
+            }}
+          >
+            {/* SECTION 3 — Application Lifecycle */}
+            <AggregateStatusBreakdown
+              title="Application Lifecycle Status Breakdown"
+              description="Distribution of loan applications across lifecycle stages from initial draft creation to terminal states."
+              statusCounts={metrics.applications_by_status}
+              emptyMessage="No loan applications recorded yet."
+              statusLabelHeading="Application Status"
+            />
+
+            {/* SECTION 4 — Lender Event Processing */}
+            <AggregateStatusBreakdown
+              title="Lender Webhook Events by Processing Status"
+              description="Audit ledger processing states for simulated lender webhook callbacks received by the platform."
+              statusCounts={metrics.lender_events_by_processing_status}
+              emptyMessage="No lender webhook events recorded yet."
+              statusLabelHeading="Processing Status"
+              footerNote={`Events represented in processing-status breakdown: ${eventCountSummary}`}
+            />
           </div>
+
+          {/* SECTION 6 — Data Freshness */}
+          {lastRefreshedAt && (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '0.5rem',
+                padding: '0.75rem 1rem',
+                backgroundColor: 'var(--color-bg-alt, #f8fafc)',
+                borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--color-border)',
+                fontSize: '0.8125rem',
+                color: 'var(--color-text-muted)',
+              }}
+            >
+              <div>
+                <strong>Last refreshed:</strong> {lastRefreshedAt.toLocaleTimeString()} ({lastRefreshedAt.toLocaleDateString()})
+              </div>
+              <div style={{ fontSize: '0.75rem' }}>
+                Browser retrieval timestamp &bull; On-demand snapshot; no background polling.
+              </div>
+            </div>
+          )}
         </>
       ) : null}
     </div>
