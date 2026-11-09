@@ -217,12 +217,13 @@ Note: The backend service should be running separately on port 8000 before inter
   cd frontend
   npm test -- --run
   ```
-  Runs 95 Vitest unit and integration tests covering auth, route guards, dashboards, customer draft application lifecycle, versioned consent management, multi-lender matching, mock offer comparison, mock KFS dialog, offer selection, idempotent submission, and simulated lender event ledger.
+  Runs 118 Vitest unit and integration tests covering auth, route guards, dashboards, customer draft application lifecycle, versioned consent management, multi-lender matching, mock offer comparison, mock KFS dialog, offer selection, idempotent submission, simulated lender event ledger, and caller assigned-lead workspace.
 
 ---
 
 ## 📚 Technical Documentation
 
+- [Caller Workspace](docs/caller-workspace.md)
 - [Customer Offer Comparison & Submission Workflow](docs/customer-offer-and-submission-workflow.md)
 - [Customer Application & Matching Workflow](docs/customer-application-workflow.md)
 - [Frontend Foundation & Architecture](docs/frontend-foundation.md)

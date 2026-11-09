@@ -3,18 +3,7 @@ export * from '../features/consents/types';
 export * from '../features/matching/types';
 export * from '../features/offers/types';
 export * from '../features/submissions/types';
-
-export interface CallerLead {
-  id: number;
-  synthetic_reference: string;
-  applicant_name: string;
-  age: number;
-  monthly_income: string;
-  work_type: string;
-  requested_amount: string;
-  status: string;
-  assigned_at: string;
-}
+export * from '../features/caller/types';
 
 export interface AdminMetrics {
   total_leads: number;
