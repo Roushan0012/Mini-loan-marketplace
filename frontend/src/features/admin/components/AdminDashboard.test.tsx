@@ -98,6 +98,9 @@ describe('Admin Analytics Dashboard Component Tests', () => {
     // 22. Submissions label says "Total Submissions", NOT "Dispatched Submissions"
     expect(screen.getByText('Total Submissions')).toBeInTheDocument();
     expect(screen.queryByText('Dispatched Submissions')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Total offer submission records across all lifecycle statuses')
+    ).toBeInTheDocument();
   });
 
   it('23, 24, 25, & 27. Application and event breakdowns render safely with Title Case labels, progress bars, zero counts, and unknown statuses', async () => {

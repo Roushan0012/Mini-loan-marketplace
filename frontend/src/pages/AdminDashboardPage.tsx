@@ -160,7 +160,7 @@ export const AdminDashboardPage: React.FC = () => {
               <AdminMetricCard
                 title="Total Submissions"
                 value={metrics.total_submissions}
-                description="Total offer submissions dispatched to mock lenders"
+                description="Total offer submission records across all lifecycle statuses"
               />
             </div>
           </div>
