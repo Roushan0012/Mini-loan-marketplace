@@ -6,9 +6,8 @@ import { Button } from '../../../components/ui/Button';
 import { ErrorMessage } from '../../../components/feedback/ErrorMessage';
 import { applicationService } from '../services/applicationService';
 import { WorkType } from '../types';
+import { isNonNegativeDecimal, isPositiveDecimal } from '../utils/validators';
 import { ApiError } from '../../../services/apiErrors';
-
-const DECIMAL_REGEX = /^\d+(\.\d{1,2})?$/;
 
 export const CreateApplicationPage: React.FC = () => {
   const navigate = useNavigate();
@@ -37,7 +36,7 @@ export const CreateApplicationPage: React.FC = () => {
     const incomeTrimmed = monthlyIncome.trim();
     if (!incomeTrimmed) {
       errors.monthlyIncome = 'Monthly income is required.';
-    } else if (!DECIMAL_REGEX.test(incomeTrimmed)) {
+    } else if (!isNonNegativeDecimal(incomeTrimmed)) {
       errors.monthlyIncome = 'Monthly income must be a valid non-negative number with at most 2 decimal places.';
     } else if (incomeTrimmed.replace('.', '').length > 12) {
       errors.monthlyIncome = 'Monthly income cannot exceed 12 digits.';
@@ -47,7 +46,7 @@ export const CreateApplicationPage: React.FC = () => {
     const amountTrimmed = requestedAmount.trim();
     if (!amountTrimmed) {
       errors.requestedAmount = 'Requested loan amount is required.';
-    } else if (!DECIMAL_REGEX.test(amountTrimmed) || parseFloat(amountTrimmed) <= 0) {
+    } else if (!isPositiveDecimal(amountTrimmed)) {
       errors.requestedAmount = 'Requested loan amount must be a positive number with at most 2 decimal places.';
     } else if (amountTrimmed.replace('.', '').length > 12) {
       errors.requestedAmount = 'Requested loan amount cannot exceed 12 digits.';

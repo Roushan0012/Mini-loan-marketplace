@@ -31,7 +31,7 @@ Three initial version `v1.0` policies are defined and seeded into the system:
 
 ## 3. JSONB Rule Structure & Pydantic Schema
 
-Eligibility rules are stored in the PostgreSQL `rules` JSONB column of the `lender_policies` table. Schema integrity is strictly enforced by the Pydantic model `LenderPolicyRules` located in [`backend/app/schemas/lender_policy.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/schemas/lender_policy.py).
+Eligibility rules are stored in the PostgreSQL `rules` JSONB column of the `lender_policies` table. Schema integrity is strictly enforced by the Pydantic model `LenderPolicyRules` located in [`backend/app/schemas/lender_policy.py`](../backend/app/schemas/lender_policy.py).
 
 ### Schema Specification
 
@@ -80,7 +80,7 @@ In lending platforms, underwriting rules evolve over time (e.g., income threshol
 
 ## 5. Idempotent Seeding & Safety Guards
 
-Seeding is handled via [`backend/app/db/seed_lender_policies.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/db/seed_lender_policies.py).
+Seeding is handled via [`backend/app/db/seed_lender_policies.py`](../backend/app/db/seed_lender_policies.py).
 
 ### Execution Command
 
@@ -107,7 +107,7 @@ The CLI entrypoint enforces strict runtime safety checks:
 
 ## 6. Consent Readiness Hardening
 
-During Step 8A, two critical readiness vulnerabilities in [`backend/app/services/consent_service.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/consent_service.py) were resolved.
+During Step 8A, two critical readiness vulnerabilities in [`backend/app/services/consent_service.py`](../backend/app/services/consent_service.py) were resolved.
 
 ### Fix 1: Multi-Version Consent Resolution
 

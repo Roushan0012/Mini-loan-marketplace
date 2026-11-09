@@ -250,3 +250,28 @@ class OfferSubmissionResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     submission_result: Literal["created", "replayed"]
+
+
+class OfferSubmissionStatusResponse(BaseModel):
+    """Pydantic v2 schema representing the current state of an application's offer submission."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    application_id: int
+    offer_id: int
+    lender_code: str
+    lender_name: str
+    policy_version: str
+    status: Literal[
+        "pending",
+        "submitted",
+        "accepted",
+        "declined",
+        "timed_out",
+        "failed",
+    ]
+    mock_reference: Optional[str] = None
+    submitted_at: datetime
+    created_at: datetime
+    updated_at: datetime

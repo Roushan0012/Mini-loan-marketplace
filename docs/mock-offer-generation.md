@@ -32,7 +32,7 @@ Underwriting and pricing are strictly segregated in the architecture:
 | Aspect | Eligibility Rules (`rules` JSONB) | Offer Terms (`offer_terms` JSONB) |
 | :--- | :--- | :--- |
 | **Domain Purpose** | Underwriting qualification ("*Can* this customer borrow?") | Commercial pricing ("*What* are the borrowing terms?") |
-| **Evaluated In** | Matching Engine ([`matching_service.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/matching_service.py)) | Offer Generator ([`offer_service.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/offer_service.py)) |
+| **Evaluated In** | Matching Engine ([`matching_service.py`](../backend/app/services/matching_service.py)) | Offer Generator ([`offer_service.py`](../backend/app/services/offer_service.py)) |
 | **Input Parameters** | `min_age`, `min_monthly_income`, `allowed_work_types` | `apr_percent`, `term_months`, `max_loan_amount` |
 | **Database Entity** | Stored in `lender_decisions.decision_status` | Stored in `offers` table linked 1-to-1 to decision |
 | **Lifecycle Impact** | Determines eligibility outcome (`eligible` / `ineligible`) | Produces financial amortisation and monthly installment |

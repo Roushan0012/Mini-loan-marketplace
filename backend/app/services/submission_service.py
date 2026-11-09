@@ -13,7 +13,7 @@ from app.models.loan_application import LoanApplication
 from app.models.match_run import MatchRun
 from app.models.offer import Offer
 from app.models.offer_submission import OfferSubmission
-from app.schemas.offer import OfferSubmissionResponse
+from app.schemas.offer import OfferSubmissionResponse, OfferSubmissionStatusResponse
 from app.services.consent_service import (
     get_missing_required_consents,
     has_required_active_consents,
@@ -322,3 +322,66 @@ def submit_selected_offer(
     except Exception:
         db.rollback()
         raise
+
+
+def get_application_submission_status(
+    db: Session,
+    customer_id: int,
+    application_id: int,
+) -> Optional[OfferSubmissionStatusResponse]:
+    """Retrieve the current submission status for an owned loan application.
+
+    Enforces:
+    - Application exists and belongs to customer_id (raises SubmissionApplicationNotFoundError -> 404).
+    - If application has no submission, returns None (serializes to HTTP 200 null).
+    - Eagerly loads offer -> lender_decision -> lender_policy to extract exact lender attributes.
+    - Read-only: does not modify any records, statuses, or timestamps.
+    """
+    app = (
+        db.query(LoanApplication)
+        .filter(
+            LoanApplication.id == application_id,
+            LoanApplication.customer_id == customer_id,
+        )
+        .first()
+    )
+    if app is None:
+        raise SubmissionApplicationNotFoundError("Loan application not found.")
+
+    submission = (
+        db.query(OfferSubmission)
+        .options(
+            joinedload(OfferSubmission.offer)
+            .joinedload(Offer.lender_decision)
+            .joinedload(LenderDecision.lender_policy)
+        )
+        .filter(OfferSubmission.application_id == application_id)
+        .first()
+    )
+    if submission is None:
+        return None
+
+    decision = submission.offer.lender_decision if submission.offer else None
+    policy = decision.lender_policy if decision else None
+
+    lender_code = policy.lender_code if policy else ""
+    lender_name = policy.lender_name if policy else ""
+    policy_version = (
+        decision.policy_version_snapshot
+        if decision and decision.policy_version_snapshot
+        else (policy.policy_version if policy else "")
+    )
+
+    return OfferSubmissionStatusResponse(
+        id=submission.id,
+        application_id=submission.application_id,
+        offer_id=submission.offer_id,
+        lender_code=lender_code,
+        lender_name=lender_name,
+        policy_version=policy_version,
+        status=submission.status,
+        mock_reference=submission.mock_reference,
+        submitted_at=submission.submitted_at,
+        created_at=submission.created_at,
+        updated_at=submission.updated_at,
+    )

@@ -27,7 +27,7 @@ In the Mini Loan Marketplace, underwriting eligibility evaluation and loan offer
 
 ## 2. Versioned Offer Terms Configuration
 
-Offer terms are defined within the `offer_terms` JSONB column on the `lender_policies` table. The Pydantic model [`MockOfferTerms`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/schemas/offer.py) validates the payload structure:
+Offer terms are defined within the `offer_terms` JSONB column on the `lender_policies` table. The Pydantic model [`MockOfferTerms`](../backend/app/schemas/offer.py) validates the payload structure:
 
 ```python
 class MockOfferTerms(BaseModel):
@@ -62,7 +62,7 @@ where:
 ### Decimal Arithmetic & Float Prohibition
 
 - Python's standard `float` type uses IEEE-754 binary floating-point representation, which introduces rounding anomalies (e.g. `0.1 + 0.2 != 0.3`).
-- In financial computing, all calculations use Python's [`Decimal`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/offer_calculator.py) with global context precision set to 35 decimal places.
+- In financial computing, all calculations use Python's [`Decimal`](../backend/app/services/offer_calculator.py) with global context precision set to 35 decimal places.
 - Inputs passed as `float` are strictly rejected by the validator to enforce exact monetary precision.
 
 ### Zero-Interest Handling (0% APR)
@@ -73,7 +73,7 @@ $$\text{EMI} = \frac{P}{n}$$
 
 ### Rounding: `ROUND_HALF_UP`
 
-The resulting calculated instalment is quantized to two decimal places using [`ROUND_HALF_UP`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/offer_calculator.py), rounding half values upward (e.g. `33333.3333...` rounds to `33333.33`, and `16.6666...` rounds to `16.67`).
+The resulting calculated instalment is quantized to two decimal places using [`ROUND_HALF_UP`](../backend/app/services/offer_calculator.py), rounding half values upward (e.g. `33333.3333...` rounds to `33333.33`, and `16.6666...` rounds to `16.67`).
 
 ---
 
@@ -83,7 +83,7 @@ When an applicant requests an amount ($A_{\text{req}}$), the extended offer prin
 
 $$P = \min(A_{\text{req}}, A_{\text{max}})$$
 
-Implemented in [`calculate_offer_amount()`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/offer_calculator.py):
+Implemented in [`calculate_offer_amount()`](../backend/app/services/offer_calculator.py):
 - If the applicant requests ₹1,50,000.00 and Apex Financial's maximum is ₹2,50,000.00, the offer amount is ₹1,50,000.00.
 - If the applicant requests ₹3,00,000.00 and Sterling Loans' maximum is ₹1,50,000.00, the offer amount is capped at ₹1,50,000.00.
 

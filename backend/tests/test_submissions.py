@@ -1021,3 +1021,76 @@ def test_service_level_idempotency_key_validations(
         )
     assert "between 8 and 128 characters" in str(exc_info.value)
 
+
+def test_get_submission_status_owner_and_null_and_scoping(
+    client: TestClient,
+    db_session: Session,
+    setup_sub_policies: None,
+    sub_customer_a: Tuple[User, str],
+    sub_customer_b: Tuple[User, str],
+) -> None:
+    """Test GET /applications/{application_id}/submission.
+
+    Verifies:
+    - Submission returned for owner with correct lender information and policy snapshot.
+    - Idempotency key is NOT present in response.
+    - Read endpoint changes no records or statuses.
+    - Owned application without submission returns HTTP 200 with JSON null.
+    - Foreign application returns 404.
+    - Unknown application returns 404.
+    """
+    user_a, token_a = sub_customer_a
+    user_b, token_b = sub_customer_b
+    app, selected_offer, _ = _create_app_with_selected_offer(db_session, user_a.id)
+
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # 1. Before submission: application has no submission -> returns 200 with null
+    res_null = client.get(f"/api/v1/applications/{app.id}/submission", headers=headers_a)
+    assert res_null.status_code == 200
+    assert res_null.json() is None
+
+    # 2. Submit the offer
+    key = str(uuid.uuid4())
+    sub_res = client.post(
+        f"/api/v1/applications/{app.id}/offers/{selected_offer.id}/submit",
+        headers={"Authorization": f"Bearer {token_a}", "Idempotency-Key": key},
+    )
+    assert sub_res.status_code == 200
+    created_sub = sub_res.json()
+
+    # 3. GET /applications/{app.id}/submission returns the submission status
+    res_sub = client.get(f"/api/v1/applications/{app.id}/submission", headers=headers_a)
+    assert res_sub.status_code == 200
+    data = res_sub.json()
+    assert data is not None
+    assert data["id"] == created_sub["id"]
+    assert data["application_id"] == app.id
+    assert data["offer_id"] == selected_offer.id
+    assert data["status"] == "submitted"
+    assert data["mock_reference"] == created_sub["mock_reference"]
+    assert data["lender_code"] == created_sub["lender_code"]
+    assert data["lender_name"] == created_sub["lender_name"]
+    assert data["policy_version"] == created_sub["policy_version"]
+    assert data["submitted_at"] is not None
+    assert data["created_at"] is not None
+    assert data["updated_at"] is not None
+    # Crucially ensure idempotency_key is not leaked
+    assert "idempotency_key" not in data
+
+    # 4. Unknown application returns 404
+    res_unknown = client.get("/api/v1/applications/999999/submission", headers=headers_a)
+    assert res_unknown.status_code == 404
+
+    # 5. Foreign application returns 404
+    res_foreign = client.get(f"/api/v1/applications/{app.id}/submission", headers=headers_b)
+    assert res_foreign.status_code == 404
+
+    # 6. Verify read endpoint changes no records
+    sub_count_before = db_session.query(OfferSubmission).count()
+    res_repeat = client.get(f"/api/v1/applications/{app.id}/submission", headers=headers_a)
+    assert res_repeat.status_code == 200
+    sub_count_after = db_session.query(OfferSubmission).count()
+    assert sub_count_before == sub_count_after
+

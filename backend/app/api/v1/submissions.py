@@ -10,13 +10,14 @@ from app.models.loan_application import LoanApplication
 from app.models.offer_submission import OfferSubmission
 from app.models.user import User
 from app.schemas.lender_event import LenderEventHistoryItemResponse
-from app.schemas.offer import OfferSubmissionResponse
+from app.schemas.offer import OfferSubmissionResponse, OfferSubmissionStatusResponse
 from app.services.submission_service import (
     SubmissionAdapterError,
     SubmissionApplicationNotFoundError,
     SubmissionConflictError,
     SubmissionConsentConflictError,
     SubmissionOfferNotFoundError,
+    get_application_submission_status,
     submit_selected_offer,
 )
 
@@ -104,6 +105,39 @@ def submit_offer_endpoint(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
+        )
+
+
+@router.get(
+    "/{application_id}/submission",
+    response_model=Optional[OfferSubmissionStatusResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Get current offer submission status for a loan application",
+)
+def get_submission_status_endpoint(
+    application_id: int,
+    current_user: User = Depends(require_customer),
+    db: Session = Depends(get_db),
+) -> Optional[OfferSubmissionStatusResponse]:
+    """Retrieve the current submission status for a customer's loan application.
+
+    Enforces:
+    - Customer authentication and loan application ownership.
+    - Returns HTTP 404 if application not found or not owned by the customer.
+    - Returns HTTP 200 with JSON null if application has no submission yet.
+    - Returns HTTP 200 with OfferSubmissionStatusResponse if submission exists.
+    - Read-only query; does not modify records, timestamps, or statuses.
+    """
+    try:
+        return get_application_submission_status(
+            db=db,
+            customer_id=current_user.id,
+            application_id=application_id,
+        )
+    except SubmissionApplicationNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan application not found.",
         )
 
 

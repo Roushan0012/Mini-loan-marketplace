@@ -8,17 +8,27 @@ import { ErrorMessage } from '../../../components/feedback/ErrorMessage';
 import { applicationService } from '../services/applicationService';
 import { consentService } from '../../consents/services/consentService';
 import { matchingService } from '../../matching/services/matchingService';
+import { offerService } from '../../offers/services/offerService';
+import { submissionService } from '../../submissions/services/submissionService';
 import { LoanApplication, WorkType } from '../types';
 import { ConsentNotice, ConsentRecord } from '../../consents/types';
 import { MatchRun } from '../../matching/types';
+import { OfferResponse, OfferSelectionResponse } from '../../offers/types';
+import {
+  LenderEventHistoryItem,
+  OfferSubmissionResponse,
+  OfferSubmissionStatusResponse,
+} from '../../submissions/types';
 import { getConsentReadiness } from '../../consents/utils/consentReadiness';
 import { ConsentNoticeCard } from '../../consents/components/ConsentNoticeCard';
 import { ConsentHistoryList } from '../../consents/components/ConsentHistoryList';
 import { MatchingSection } from '../../matching/components/MatchingSection';
 import { MatchHistoryList } from '../../matching/components/MatchHistoryList';
+import { OfferComparisonSection } from '../../offers/components/OfferComparisonSection';
+import { SubmissionStatusPanel } from '../../submissions/components/SubmissionStatusPanel';
+import { formatRupees } from '../../offers/utils/formatMoney';
+import { isNonNegativeDecimal, isPositiveDecimal } from '../utils/validators';
 import { ApiError } from '../../../services/apiErrors';
-
-const DECIMAL_REGEX = /^\d+(\.\d{1,2})?$/;
 
 export const ApplicationDetailPage: React.FC = () => {
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -30,8 +40,12 @@ export const ApplicationDetailPage: React.FC = () => {
   const [notices, setNotices] = useState<ConsentNotice[]>([]);
   const [consentHistory, setConsentHistory] = useState<ConsentRecord[]>([]);
   const [matchRuns, setMatchRuns] = useState<MatchRun[]>([]);
+  const [offers, setOffers] = useState<OfferResponse[]>([]);
+  const [submission, setSubmission] = useState<OfferSubmissionStatusResponse | null>(null);
+  const [events, setEvents] = useState<LenderEventHistoryItem[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshingSubmission, setIsRefreshingSubmission] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Draft form editing state
@@ -67,18 +81,25 @@ export const ApplicationDetailPage: React.FC = () => {
     setLoadError(null);
 
     try {
-      const [appData, noticeData, consentData, matchData] = await Promise.all([
-        applicationService.getApplication(appId),
-        consentService.getCurrentConsentNotices(),
-        consentService.getApplicationConsentHistory(appId),
-        matchingService.getMatchHistory(appId),
-      ]);
+      const [appData, noticeData, consentData, matchData, offersData, subData, eventsData] =
+        await Promise.all([
+          applicationService.getApplication(appId),
+          consentService.getCurrentConsentNotices(),
+          consentService.getApplicationConsentHistory(appId),
+          matchingService.getMatchHistory(appId),
+          offerService.listOffers(appId).catch(() => [] as OfferResponse[]),
+          submissionService.getSubmissionStatus(appId).catch(() => null),
+          submissionService.getSubmissionEvents(appId).catch(() => [] as LenderEventHistoryItem[]),
+        ]);
 
       setApplication(appData);
       populateForm(appData);
       setNotices(noticeData);
       setConsentHistory(consentData);
       setMatchRuns(matchData.runs || []);
+      setOffers(offersData || []);
+      setSubmission(subData);
+      setEvents(eventsData || []);
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 404) {
@@ -105,6 +126,25 @@ export const ApplicationDetailPage: React.FC = () => {
       setConsentHistory(history);
     } catch {
       // Ignore background refresh failure
+    }
+  };
+
+  const refreshSubmissionAndEvents = async () => {
+    if (isNaN(appId) || appId <= 0) return;
+    setIsRefreshingSubmission(true);
+    try {
+      const [subData, eventsData, appData] = await Promise.all([
+        submissionService.getSubmissionStatus(appId),
+        submissionService.getSubmissionEvents(appId),
+        applicationService.getApplication(appId),
+      ]);
+      setSubmission(subData);
+      setEvents(eventsData || []);
+      setApplication(appData);
+    } catch {
+      // Ignore background refresh failure
+    } finally {
+      setIsRefreshingSubmission(false);
     }
   };
 
@@ -161,7 +201,7 @@ export const ApplicationDetailPage: React.FC = () => {
     const incomeTrimmed = monthlyIncome.trim();
     if (!incomeTrimmed) {
       errors.monthlyIncome = 'Monthly income is required.';
-    } else if (!DECIMAL_REGEX.test(incomeTrimmed)) {
+    } else if (!isNonNegativeDecimal(incomeTrimmed)) {
       errors.monthlyIncome = 'Monthly income must be a valid non-negative number with at most 2 decimal places.';
     } else if (incomeTrimmed.replace('.', '').length > 12) {
       errors.monthlyIncome = 'Monthly income cannot exceed 12 digits.';
@@ -170,7 +210,7 @@ export const ApplicationDetailPage: React.FC = () => {
     const amountTrimmed = requestedAmount.trim();
     if (!amountTrimmed) {
       errors.requestedAmount = 'Requested loan amount is required.';
-    } else if (!DECIMAL_REGEX.test(amountTrimmed) || parseFloat(amountTrimmed) <= 0) {
+    } else if (!isPositiveDecimal(amountTrimmed)) {
       errors.requestedAmount = 'Requested loan amount must be a positive number with at most 2 decimal places.';
     } else if (amountTrimmed.replace('.', '').length > 12) {
       errors.requestedAmount = 'Requested loan amount cannot exceed 12 digits.';
@@ -226,9 +266,27 @@ export const ApplicationDetailPage: React.FC = () => {
       setApplication(appData);
       setMatchRuns(matchData.runs || [newRun]);
     } catch {
-      // If refresh fails, append latest run directly
       setMatchRuns((prev) => [newRun, ...prev.filter((r) => r.id !== newRun.id)]);
     }
+  };
+
+  const handleOfferSelected = async (selection: OfferSelectionResponse) => {
+    try {
+      const [appData, updatedOffers] = await Promise.all([
+        applicationService.getApplication(appId),
+        offerService.listOffers(appId),
+      ]);
+      setApplication(appData);
+      setOffers(updatedOffers);
+    } catch {
+      if (application) {
+        setApplication({ ...application, status: selection.application_status });
+      }
+    }
+  };
+
+  const handleSubmissionComplete = async (_newSub: OfferSubmissionResponse) => {
+    await refreshSubmissionAndEvents();
   };
 
   if (isLoading) {
@@ -251,278 +309,312 @@ export const ApplicationDetailPage: React.FC = () => {
   const isDraft = application.status === 'draft';
   const consentReadiness = getConsentReadiness(notices, consentHistory);
 
+  // Identify latest completed match run
+  const sortedRuns = [...matchRuns].sort((a, b) => b.run_number - a.run_number);
+  const latestMatchRun = sortedRuns.find((r) => r.status === 'completed') || null;
+
+  // Selected offer if any
+  const selectedOffer = offers.find((o) => o.status === 'selected') || null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        {/* Navigation & Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+      {/* Navigation & Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem', marginBottom: '0.5rem' }}
+            onClick={() => navigate('/customer/dashboard')}
+          >
+            &larr; Back to Dashboard
+          </button>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>
+            Application #{application.id}
+          </h2>
+          <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+            Created on {new Date(application.created_at).toLocaleString()} &bull; Last updated {new Date(application.updated_at).toLocaleString()}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Lifecycle Status:</span>
+          <span
+            className={`badge badge-${
+              application.status === 'draft'
+                ? 'draft'
+                : application.status === 'matched'
+                ? 'status'
+                : application.status === 'accepted'
+                ? 'accepted'
+                : application.status === 'declined'
+                ? 'declined'
+                : 'submitted'
+            }`}
+            style={{ fontSize: '0.875rem', padding: '0.35rem 0.75rem' }}
+          >
+            {application.status.toUpperCase()}
+          </span>
+        </div>
+      </div>
+
+      {/* SECTION 1: Application Profile & Editing */}
+      <Card title={isDraft ? 'Application Profile (Editable Draft)' : 'Application Profile (Read-Only)'}>
+        {!isDraft ? (
           <div>
-            <button
-              type="button"
-              className="btn btn-outline"
-              style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem', marginBottom: '0.5rem' }}
-              onClick={() => navigate('/customer/dashboard')}
-            >
-              &larr; Back to Dashboard
-            </button>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>
-              Application #{application.id}
-            </h2>
-            <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
-              Created on {new Date(application.created_at).toLocaleString()} &bull; Last updated {new Date(application.updated_at).toLocaleString()}
+            <div className="alert alert-info" style={{ fontSize: '0.875rem', marginBottom: '1.25rem' }}>
+              ℹ️ This application is in <strong>{application.status.toUpperCase()}</strong> status and is locked for editing. Only draft applications can be modified.
             </div>
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>Lifecycle Status:</span>
-            <span
-              className={`badge badge-${
-                application.status === 'draft'
-                  ? 'draft'
-                  : application.status === 'matched'
-                  ? 'status'
-                  : application.status === 'accepted'
-                  ? 'accepted'
-                  : application.status === 'declined'
-                  ? 'declined'
-                  : 'submitted'
-              }`}
-              style={{ fontSize: '0.875rem', padding: '0.35rem 0.75rem' }}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '1.5rem',
+                padding: '1rem 0',
+              }}
             >
-              {application.status.toUpperCase()}
-            </span>
-          </div>
-        </div>
-
-        {/* SECTION 1: Application Profile & Editing */}
-        <Card title={isDraft ? 'Application Profile (Editable Draft)' : 'Application Profile (Read-Only)'}>
-          {!isDraft ? (
-            <div>
-              <div className="alert alert-info" style={{ fontSize: '0.875rem', marginBottom: '1.25rem' }}>
-                ℹ️ This application is in <strong>{application.status.toUpperCase()}</strong> status and is locked for editing. Only draft applications can be modified.
+              <div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Age</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>{application.age} years</div>
               </div>
 
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                  gap: '1.5rem',
-                  padding: '1rem 0',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Age</div>
-                  <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>{application.age} years</div>
+              <div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Employment Type</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>
+                  {application.work_type === 'salaried'
+                    ? 'Salaried Employee'
+                    : application.work_type === 'self_employed'
+                    ? 'Self-Employed'
+                    : 'Other'}
                 </div>
+              </div>
 
-                <div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Employment Type</div>
-                  <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>
-                    {application.work_type === 'salaried'
-                      ? 'Salaried Employee'
-                      : application.work_type === 'self_employed'
-                      ? 'Self-Employed'
-                      : 'Other'}
-                  </div>
+              <div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Monthly Income</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>
+                  {formatRupees(application.monthly_income)}
                 </div>
+              </div>
 
-                <div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Monthly Income</div>
-                  <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>
-                    ₹ {Number(application.monthly_income).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Requested Amount</div>
-                  <div style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--color-primary)' }}>
-                    ₹ {Number(application.requested_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
+              <div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Requested Amount</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--color-primary)' }}>
+                  {formatRupees(application.requested_amount)}
                 </div>
               </div>
             </div>
-          ) : (
-            <div>
-              <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
-                You can adjust your profile information and requested loan amount while your application is in draft status.
-              </p>
-
-              {saveSuccessMessage && (
-                <div className="alert alert-success" style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
-                  ✓ {saveSuccessMessage}
-                </div>
-              )}
-
-              {saveErrorMessage && (
-                <div style={{ marginBottom: '1rem' }}>
-                  <ErrorMessage message={saveErrorMessage} />
-                </div>
-              )}
-
-              <form onSubmit={handleSaveDraft} noValidate>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
-                  <Input
-                    id="edit_age"
-                    name="age"
-                    label="Age (Years)"
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={age}
-                    onChange={(e) => setAge(e.target.value)}
-                    error={fieldErrors.age}
-                    disabled={isSavingDraft}
-                    required
-                  />
-
-                  <div className="form-group">
-                    <label htmlFor="edit_work_type" className="form-label">
-                      Employment Type
-                    </label>
-                    <select
-                      id="edit_work_type"
-                      name="work_type"
-                      className={`form-input ${fieldErrors.workType ? 'form-input-error' : ''}`}
-                      value={workType}
-                      onChange={(e) => setWorkType(e.target.value as WorkType)}
-                      disabled={isSavingDraft}
-                      aria-invalid={Boolean(fieldErrors.workType)}
-                      aria-describedby={fieldErrors.workType ? 'edit_work_type-error' : undefined}
-                      required
-                    >
-                      <option value="salaried">Salaried Employee</option>
-                      <option value="self_employed">Self-Employed / Business Owner</option>
-                      <option value="other">Other</option>
-                    </select>
-                    {fieldErrors.workType && (
-                      <p id="edit_work_type-error" className="form-error-text" role="alert">
-                        {fieldErrors.workType}
-                      </p>
-                    )}
-                  </div>
-
-                  <Input
-                    id="edit_monthly_income"
-                    name="monthly_income"
-                    label="Monthly Income (₹)"
-                    type="text"
-                    value={monthlyIncome}
-                    onChange={(e) => setMonthlyIncome(e.target.value)}
-                    error={fieldErrors.monthlyIncome}
-                    disabled={isSavingDraft}
-                    required
-                  />
-
-                  <Input
-                    id="edit_requested_amount"
-                    name="requested_amount"
-                    label="Requested Loan Amount (₹)"
-                    type="text"
-                    value={requestedAmount}
-                    onChange={(e) => setRequestedAmount(e.target.value)}
-                    error={fieldErrors.requestedAmount}
-                    disabled={isSavingDraft}
-                    required
-                  />
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    isLoading={isSavingDraft}
-                    disabled={isSavingDraft}
-                  >
-                    Save Changes
-                  </Button>
-                </div>
-              </form>
-            </div>
-          )}
-        </Card>
-
-        {/* SECTION 2: Consent Management */}
-        <div>
-          <div style={{ marginBottom: '1rem' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
-              Data Privacy & Lending Consents
-            </h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', margin: '0.25rem 0 0 0' }}>
-              To evaluate eligibility across mock lenders, explicit consent is required for each distinct processing purpose. Consents are strictly purpose-specific and tied to published notice versions.
-            </p>
           </div>
-
-          {consentError && (
-            <div style={{ marginBottom: '1rem' }}>
-              <ErrorMessage message={consentError} />
-            </div>
-          )}
-
-          {notices.length === 0 ? (
-            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
-              No consent notices are currently published.
+        ) : (
+          <div>
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginBottom: '1.25rem' }}>
+              You can adjust your profile information and requested loan amount while your application is in draft status.
             </p>
-          ) : (
-            notices.map((notice) => {
-              const activeConsent = consentHistory.find(
-                (c) =>
-                  c.purpose === notice.purpose &&
-                  c.notice_version === notice.notice_version &&
-                  c.status === 'granted' &&
-                  !c.revoked_at
-              );
 
-              const revokedConsent = consentHistory.find(
-                (c) =>
-                  c.purpose === notice.purpose &&
-                  c.notice_version === notice.notice_version &&
-                  c.status === 'revoked'
-              );
+            {saveSuccessMessage && (
+              <div className="alert alert-success" style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
+                ✓ {saveSuccessMessage}
+              </div>
+            )}
 
-              return (
-                <ConsentNoticeCard
-                  key={`${notice.purpose}-${notice.notice_version}`}
-                  notice={notice}
-                  activeConsent={activeConsent}
-                  revokedConsent={revokedConsent}
-                  onGrant={handleGrantConsent}
-                  onRevoke={handleRevokeConsent}
-                  isSubmitting={isConsentSubmitting}
+            {saveErrorMessage && (
+              <div style={{ marginBottom: '1rem' }}>
+                <ErrorMessage message={saveErrorMessage} />
+              </div>
+            )}
+
+            <form onSubmit={handleSaveDraft} noValidate>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+                <Input
+                  id="edit_age"
+                  name="age"
+                  label="Age (Years)"
+                  type="number"
+                  min="1"
+                  max="120"
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  error={fieldErrors.age}
+                  disabled={isSavingDraft}
+                  required
                 />
-              );
-            })
-          )}
 
-          {/* Consent History Audit Log */}
-          <div style={{ marginTop: '1.5rem' }}>
-            <Card title="Consent Event Audit History">
-              <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                Immutable chronological log of all consent grant and revocation actions recorded for this application.
-              </p>
-              <ConsentHistoryList history={consentHistory} />
-            </Card>
+                <div className="form-group">
+                  <label htmlFor="edit_work_type" className="form-label">
+                    Employment Type
+                  </label>
+                  <select
+                    id="edit_work_type"
+                    name="work_type"
+                    className={`form-input ${fieldErrors.workType ? 'form-input-error' : ''}`}
+                    value={workType}
+                    onChange={(e) => setWorkType(e.target.value as WorkType)}
+                    disabled={isSavingDraft}
+                    aria-invalid={Boolean(fieldErrors.workType)}
+                    aria-describedby={fieldErrors.workType ? 'edit_work_type-error' : undefined}
+                    required
+                  >
+                    <option value="salaried">Salaried Employee</option>
+                    <option value="self_employed">Self-Employed / Business Owner</option>
+                    <option value="other">Other</option>
+                  </select>
+                  {fieldErrors.workType && (
+                    <p id="edit_work_type-error" className="form-error-text" role="alert">
+                      {fieldErrors.workType}
+                    </p>
+                  )}
+                </div>
+
+                <Input
+                  id="edit_monthly_income"
+                  name="monthly_income"
+                  label="Monthly Income (₹)"
+                  type="text"
+                  value={monthlyIncome}
+                  onChange={(e) => setMonthlyIncome(e.target.value)}
+                  error={fieldErrors.monthlyIncome}
+                  disabled={isSavingDraft}
+                  required
+                />
+
+                <Input
+                  id="edit_requested_amount"
+                  name="requested_amount"
+                  label="Requested Loan Amount (₹)"
+                  type="text"
+                  value={requestedAmount}
+                  onChange={(e) => setRequestedAmount(e.target.value)}
+                  error={fieldErrors.requestedAmount}
+                  disabled={isSavingDraft}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  isLoading={isSavingDraft}
+                  disabled={isSavingDraft}
+                >
+                  Save Changes
+                </Button>
+              </div>
+            </form>
           </div>
+        )}
+      </Card>
+
+      {/* SECTION 2: Consent Management */}
+      <div>
+        <div style={{ marginBottom: '1rem' }}>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>
+            Data Privacy & Lending Consents
+          </h3>
+          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', margin: '0.25rem 0 0 0' }}>
+            To evaluate eligibility across mock lenders, explicit consent is required for each distinct processing purpose. Consents are strictly purpose-specific and tied to published notice versions.
+          </p>
         </div>
 
-        {/* SECTION 3: Multi-Lender Eligibility Matching */}
-        <div>
-          <MatchingSection
-            applicationId={application.id}
-            applicationStatus={application.status}
-            consentReadiness={consentReadiness}
-            onMatchingSuccess={handleMatchingSuccess}
-            onConsentConflict={refreshConsents}
-          />
-        </div>
+        {consentError && (
+          <div style={{ marginBottom: '1rem' }}>
+            <ErrorMessage message={consentError} />
+          </div>
+        )}
 
-        {/* SECTION 4: Matching History */}
-        <div>
-          <Card title="Historical Matching Runs">
+        {notices.length === 0 ? (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+            No consent notices are currently published.
+          </p>
+        ) : (
+          notices.map((notice) => {
+            const activeConsent = consentHistory.find(
+              (c) =>
+                c.purpose === notice.purpose &&
+                c.notice_version === notice.notice_version &&
+                c.status === 'granted' &&
+                !c.revoked_at
+            );
+
+            const revokedConsent = consentHistory.find(
+              (c) =>
+                c.purpose === notice.purpose &&
+                c.notice_version === notice.notice_version &&
+                c.status === 'revoked'
+            );
+
+            return (
+              <ConsentNoticeCard
+                key={`${notice.purpose}-${notice.notice_version}`}
+                notice={notice}
+                activeConsent={activeConsent}
+                revokedConsent={revokedConsent}
+                onGrant={handleGrantConsent}
+                onRevoke={handleRevokeConsent}
+                isSubmitting={isConsentSubmitting}
+              />
+            );
+          })
+        )}
+
+        {/* Consent History Audit Log */}
+        <div style={{ marginTop: '1.5rem' }}>
+          <Card title="Consent Event Audit History">
             <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-              Chronological log of multi-lender eligibility evaluations performed for this application. Each run preserves the lender policies active at evaluation time.
+              Immutable chronological log of all consent grant and revocation actions recorded for this application.
             </p>
-            <MatchHistoryList runs={matchRuns} />
+            <ConsentHistoryList history={consentHistory} />
           </Card>
         </div>
       </div>
+
+      {/* SECTION 3: Multi-Lender Eligibility Matching */}
+      <div>
+        <MatchingSection
+          applicationId={application.id}
+          applicationStatus={application.status}
+          consentReadiness={consentReadiness}
+          onMatchingSuccess={handleMatchingSuccess}
+          onConsentConflict={refreshConsents}
+        />
+      </div>
+
+      {/* SECTION 4: Matching History */}
+      <div>
+        <Card title="Historical Matching Runs">
+          <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+            Chronological log of multi-lender eligibility evaluations performed for this application. Each run preserves the lender policies active at evaluation time.
+          </p>
+          <MatchHistoryList runs={matchRuns} />
+        </Card>
+      </div>
+
+      {/* SECTION 5, 6, & 7: Mock Loan Offers, KFS, and Selection */}
+      {!isDraft && (
+        <OfferComparisonSection
+          applicationId={application.id}
+          applicationStatus={application.status}
+          consentReadiness={consentReadiness}
+          latestMatchRun={latestMatchRun}
+          offers={offers}
+          onOffersGenerated={setOffers}
+          onOfferSelected={handleOfferSelected}
+        />
+      )}
+
+      {/* SECTION 8: Mock Lender Submission & Outcome Tracking */}
+      {!isDraft && (
+        <SubmissionStatusPanel
+          applicationId={application.id}
+          applicationStatus={application.status}
+          selectedOffer={selectedOffer}
+          submission={submission}
+          events={events}
+          onSubmissionComplete={handleSubmissionComplete}
+          onRefresh={refreshSubmissionAndEvents}
+          isRefreshing={isRefreshingSubmission}
+        />
+      )}
+    </div>
   );
 };

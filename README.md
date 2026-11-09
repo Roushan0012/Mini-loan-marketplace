@@ -83,7 +83,7 @@ The customer application journey follows an explicit 13-step progression:
 12. **Prevent duplicate submissions**: Require a unique submission key (idempotency key) for final submission.
 13. **Track lifecycle**: Monitor mock lender responses, webhook receipts, and final application status.
 
-For full sequence flowcharts, state transitions, and detailed descriptions, refer to [docs/workflow.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/workflow.md).
+For full sequence flowcharts, state transitions, and detailed descriptions, refer to [docs/workflow.md](docs/workflow.md).
 
 ---
 
@@ -115,7 +115,7 @@ The application is structured around a decoupled multi-layer architecture:
 - **Mock Lender Adapters**: Isolated simulators (*Apex Financial*, *Horizon Credit*, *Sterling Loans*).
 - **Data Layer**: Relational models in PostgreSQL managed with SQLAlchemy declarative models and Alembic migrations.
 
-For the architectural diagram and component details, refer to [docs/architecture.md](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/architecture.md).
+For the architectural diagram and component details, refer to [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -210,21 +210,22 @@ Note: The backend service should be running separately on port 8000 before inter
   cd backend
   .venv/bin/python -m pytest -v
   ```
-  Runs full test suite (310 tests covering auth, RBAC, applications, consents, matching, offers, submissions, webhooks, and CORS).
+  Runs full test suite (311 tests covering auth, RBAC, applications, consents, matching, offers, submissions, webhooks, and CORS).
 
 - **Frontend Tests**:
   ```bash
   cd frontend
   npm test -- --run
   ```
-  Runs 56 Vitest unit and integration tests covering auth, route guards, dashboards, customer draft application lifecycle, versioned consent management, and multi-lender matching.
+  Runs 95 Vitest unit and integration tests covering auth, route guards, dashboards, customer draft application lifecycle, versioned consent management, multi-lender matching, mock offer comparison, mock KFS dialog, offer selection, idempotent submission, and simulated lender event ledger.
 
 ---
 
 ## 📚 Technical Documentation
 
-- [Customer Application & Matching Workflow](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/customer-application-workflow.md)
-- [Frontend Foundation & Architecture](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/frontend-foundation.md)
-- [Lending Workflow Lifecycle](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/workflow.md)
-- [Architecture & Verification Summary](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/docs/architecture.md)
+- [Customer Offer Comparison & Submission Workflow](docs/customer-offer-and-submission-workflow.md)
+- [Customer Application & Matching Workflow](docs/customer-application-workflow.md)
+- [Frontend Foundation & Architecture](docs/frontend-foundation.md)
+- [Lending Workflow Lifecycle](docs/workflow.md)
+- [Architecture & Verification Summary](docs/architecture.md)
 

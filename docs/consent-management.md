@@ -31,7 +31,7 @@ Both purposes are mandatory before the system will allow multi-lender eligibilit
 
 ## 3. Notice Registry and Version Control
 
-Defined in [`backend/app/services/consent_notices.py`](file:///Users/roushan_iiitbgp/Desktop/Mini_Loan_Marketplace/backend/app/services/consent_notices.py):
+Defined in [`backend/app/services/consent_notices.py`](../backend/app/services/consent_notices.py):
 
 - **Immutable Registry**: Notice wording is registered under composite keys `(purpose, notice_version)`. Once defined, notice text is immutable to guarantee that audit records reflect the exact text presented to the borrower at grant time.
 - **Active Version Mapping**: The registry designates a currently published version for each purpose (initially `v1.0`).

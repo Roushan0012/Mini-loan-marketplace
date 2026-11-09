@@ -54,14 +54,20 @@ describe('ApplicationDetailPage Component', () => {
       </MemoryRouter>
     );
 
-  it('9. Application detail loads from GET endpoint and displays data', async () => {
+  const setupDefaultGetMocks = (app = mockDraftApplication) => {
     vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
-      if (url === '/applications/42') return mockDraftApplication;
+      if (url === '/applications/42') return app;
       if (url === '/consents/notices') return mockNotices;
       if (url === '/applications/42/consents') return mockConsentHistory;
       if (url === '/applications/42/matches') return mockMatchSummary;
+      if (url === '/applications/42/offers') return [];
+      if (url === '/applications/42/submission') return null;
       throw new Error(`Unhandled endpoint: ${url}`);
     });
+  };
+
+  it('9. Application detail loads from GET endpoint and displays data', async () => {
+    setupDefaultGetMocks();
 
     renderComponent('42');
 
@@ -73,13 +79,7 @@ describe('ApplicationDetailPage Component', () => {
   });
 
   it('10. Draft application allows editing form inputs', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
-      if (url === '/applications/42') return mockDraftApplication;
-      if (url === '/consents/notices') return mockNotices;
-      if (url === '/applications/42/consents') return mockConsentHistory;
-      if (url === '/applications/42/matches') return mockMatchSummary;
-      throw new Error(`Unhandled endpoint: ${url}`);
-    });
+    setupDefaultGetMocks();
 
     renderComponent('42');
 
@@ -91,13 +91,7 @@ describe('ApplicationDetailPage Component', () => {
   });
 
   it('11. PATCH sends only allowed fields without customer_id or status', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
-      if (url === '/applications/42') return mockDraftApplication;
-      if (url === '/consents/notices') return mockNotices;
-      if (url === '/applications/42/consents') return mockConsentHistory;
-      if (url === '/applications/42/matches') return mockMatchSummary;
-      throw new Error(`Unhandled endpoint: ${url}`);
-    });
+    setupDefaultGetMocks();
 
     const patchSpy = vi.spyOn(apiClient, 'patch').mockResolvedValue({
       ...mockDraftApplication,
@@ -142,13 +136,7 @@ describe('ApplicationDetailPage Component', () => {
       status: 'matched',
     };
 
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
-      if (url === '/applications/42') return mockMatchedApp;
-      if (url === '/consents/notices') return mockNotices;
-      if (url === '/applications/42/consents') return mockConsentHistory;
-      if (url === '/applications/42/matches') return mockMatchSummary;
-      throw new Error(`Unhandled endpoint: ${url}`);
-    });
+    setupDefaultGetMocks(mockMatchedApp);
 
     renderComponent('42');
 
@@ -163,13 +151,7 @@ describe('ApplicationDetailPage Component', () => {
   });
 
   it('13. Displays API 409 error when draft modification is rejected', async () => {
-    vi.spyOn(apiClient, 'get').mockImplementation(async (url) => {
-      if (url === '/applications/42') return mockDraftApplication;
-      if (url === '/consents/notices') return mockNotices;
-      if (url === '/applications/42/consents') return mockConsentHistory;
-      if (url === '/applications/42/matches') return mockMatchSummary;
-      throw new Error(`Unhandled endpoint: ${url}`);
-    });
+    setupDefaultGetMocks();
 
     vi.spyOn(apiClient, 'patch').mockRejectedValue(
       new ApiError(409, 'Application is no longer in draft status and cannot be modified.')
