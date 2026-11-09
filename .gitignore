@@ -59,6 +59,10 @@ coverage.xml
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # Node & Frontend
 node_modules/

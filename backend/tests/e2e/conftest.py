@@ -10,17 +10,16 @@ from sqlalchemy import URL, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings, settings
+from app.core.e2e_safety import (
+    EXPECTED_E2E_DATABASE,
+    validate_e2e_database_name,
+    verify_e2e_database_connection,
+)
 
 # Strictly target the dedicated E2E test database
-E2E_DB_NAME = os.getenv("E2E_POSTGRES_DB", "mini_loan_marketplace_e2e")
+raw_e2e_db = os.getenv("E2E_POSTGRES_DB", EXPECTED_E2E_DATABASE)
+E2E_DB_NAME = validate_e2e_database_name(raw_e2e_db)
 E2E_WEBHOOK_SECRET = "e2e-webhook-dummy-secret-key-for-hmac-verification-12345678"
-
-# Safety verification: ensure E2E DB is not the development or production database
-if E2E_DB_NAME in ("mini_loan_marketplace", "production", "prod", "live"):
-    raise RuntimeError(
-        f"CRITICAL SAFETY VIOLATION: E2E test suite cannot target "
-        f"development or production database '{E2E_DB_NAME}'."
-    )
 
 # Create an isolated engine and sessionmaker strictly targeting the E2E database
 active_settings = get_settings()
@@ -90,6 +89,7 @@ def client() -> Generator[TestClient, None, None]:
 def setup_e2e_policies() -> Generator[None, None, None]:
     """Ensure fictional lender policies are seeded in the isolated E2E database."""
     with E2ESessionLocal() as session:
+        verify_e2e_database_connection(session)
         seed_lender_policies(session=session, enforce_dev_guard=False)
     yield
 
@@ -98,10 +98,8 @@ def setup_e2e_policies() -> Generator[None, None, None]:
 def db_session() -> Generator[Session, None, None]:
     """Provide a database session strictly connected to the isolated E2E database."""
     session = E2ESessionLocal()
-    # Verify safety: session must target E2E database
-    db_name = str(session.bind.url.database)
-    assert db_name == E2E_DB_NAME, f"Safety guard: session connected to '{db_name}', expected '{E2E_DB_NAME}'"
-    assert db_name != "mini_loan_marketplace", "Safety guard: cannot target development database"
+    # Verify safety: session must target E2E database and live connection must match
+    verify_e2e_database_connection(session)
     try:
         yield session
     finally:
@@ -110,11 +108,7 @@ def db_session() -> Generator[Session, None, None]:
 
 def _clean_e2e_test_records(session: Session) -> None:
     """Safely delete only E2E test-owned records in foreign-key safe order."""
-    db_name = str(session.bind.url.database)
-    if db_name != E2E_DB_NAME:
-        raise RuntimeError(
-            f"Safety guard violation: Refusing to clean records in database '{db_name}'. Expected '{E2E_DB_NAME}'."
-        )
+    verify_e2e_database_connection(session)
 
     test_user_subquery = session.query(User.id).filter(
         User.email.startswith(E2E_PREFIX)

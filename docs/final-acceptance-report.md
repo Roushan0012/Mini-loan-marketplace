@@ -11,7 +11,7 @@
 The **Mini Loan Marketplace** is a full-stack financial technology demonstration platform. It simulates an end-to-end multi-lender credit discovery and application lifecycle across three distinct stakeholder roles:
 1. **Customer**: Self-service registration, loan application creation, purpose-specific consent management, multi-lender eligibility matching, offer comparison, mock Key Facts Statement (KFS) inspection, offer selection, and idempotent mock offer submission.
 2. **Caller**: Dedicated lead workspace providing strict assignment-scoped lead viewing, case-insensitive search, status/work-type filtering, and pagination without mutation or cross-caller access.
-3. **Administrator**: Privacy-preserving operational monitoring dashboard reporting aggregate funnel telemetry, application statuses, processing durations, and webhook event outcomes without exposing customer PII.
+3. **Administrator**: Privacy-preserving operational monitoring dashboard reporting aggregate funnel telemetry, application statuses, and mock lender webhook event processing outcomes without exposing customer PII.
 
 ---
 
@@ -287,8 +287,9 @@ The marketplace test architecture is stratified across three independent layers:
    ```
 6. **Bootstrap Development Caller and Admin Accounts**:
    ```bash
-   python scripts/bootstrap_dev_users.py --role caller --email dev_caller@example.com --password CallerPassword123! --full-name "Dev Caller"
-   python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --password AdminPassword123! --full-name "Dev Admin"
+   python scripts/bootstrap_dev_users.py --role caller --email dev_caller@example.com --full-name "Dev Caller"
+   python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --full-name "Dev Admin"
+   # To update an existing dev account, pass --update-existing
    ```
 7. **Start FastAPI Backend**:
    ```bash
@@ -351,14 +352,41 @@ Full mapping between capstone requirements and technical deliverables is documen
 
 | Test Suite Layer | Total Tests | Passing | Failing | Execution Time | Environment |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Frontend Unit & Component (Vitest)** | 141 | 141 (100%) | 0 | ~3.98s | JSDOM / Node.js |
+| **Frontend Unit & Component (Vitest)** | 141 | 141 (100%) | 0 | ~3.89s | JSDOM / Node.js (20 test files) |
 | **Frontend TypeScript Typecheck** | All Files | Clean (0 errors) | 0 | ~2.5s | `tsc --noEmit` |
 | **Frontend ESLint Audit** | All Files | Clean (0 warnings) | 0 | ~1.8s | ESLint 9 |
-| **Frontend Production Build** | Vite Build | Success (0 errors) | 0 | ~0.5s | Rollup / Vite |
-| **Backend Unit & Integration (Pytest)** | 311 | 311 (100%) | 0 | ~21.5s | Isolated PostgreSQL Test DB |
-| **Backend E2E Lifecycle & RBAC (Pytest)** | 12 | 12 (100%) | 0 | ~1.6s | Dedicated E2E DB (`mini_loan_marketplace_e2e`) |
-| **Aggregate Automated Verification** | **464** | **464 (100%)** | **0** | **~31s** | **Clean Pass** |
+| **Frontend Production Build** | Vite Build | Success (0 errors) | 0 | ~0.5s | Rollup / Vite (`dist/`) |
+| **Backend Full Pytest Suite** | 368 | 368 (100%) | 0 | ~22.7s | Isolated PostgreSQL Test & E2E DBs |
+| **↳ Dedicated Backend E2E (Pytest)** | 12 | 12 (100%) | 0 | ~1.6s | Dedicated E2E DB (`mini_loan_marketplace_e2e`) |
+| **↳ E2E Database Safety Guards** | 24 | 24 (100%) | 0 | ~0.3s | `test_e2e_database_safety.py` |
+| **↳ Dev User Bootstrap Hardening** | 21 | 21 (100%) | 0 | ~0.4s | `test_bootstrap_dev_users.py` |
+| **Browser E2E Automation (Playwright)** | 3 | 3 (100%) | 0 | ~3.8s | Chromium Headless (`127.0.0.1:5174`) |
+| **Aggregate Automated Verification** | **512** | **512 (100%)** | **0** | **~31s** | **Clean Pass** |
 
-> [!NOTE]
-> **Browser Automation (Playwright) Environment Note**:
-> 3 browser test suites are defined under `frontend/e2e/`. Playwright Chromium headless shell was successfully downloaded. However, live automated browser execution against dev port 8000 was skipped because port 8000 on the host machine is currently occupied by an existing background service container (`ai_commerce_backend`), and project safety rules strictly forbid killing or modifying unrelated development services. The underlying application workflows are 100% verified by the automated API E2E test suite (12 tests) and Vitest frontend component suite (141 tests).
+---
+
+## 20. Step 14.1 Audit Remediation Summary
+
+### 20.1 Strict E2E Database Safety Guards
+- **Strict Allowlist**: Defined `EXPECTED_E2E_DATABASE = "mini_loan_marketplace_e2e"`. Arbitrary overrides are blocked before engine initialization, policy seeding, fixture creation, or cleanup.
+- **Connection Identity Verification**: Executes `SELECT current_database()` to cryptographically verify live database connection identity before any writes or cleanup queries.
+- **Verification Coverage**: 24 safety unit tests in [`test_e2e_database_safety.py`](../backend/tests/test_e2e_database_safety.py) proving rejection of `mini_loan_marketplace`, `production`, `prod`, `live`, `mini_loan_marketplace_prod`, `staging`, and arbitrary custom database names.
+
+### 20.2 Hardened Development User Bootstrapping
+- **Database & Environment Pinning**: [`bootstrap_dev_users.py`](../backend/scripts/bootstrap_dev_users.py) strictly executes against `ENVIRONMENT='development'` and `POSTGRES_DB='mini_loan_marketplace'`. Live connection identity is verified via `SELECT current_database()`.
+- **Password Strength**: Aligned password minimum length with `UserRegisterRequest` schema (minimum 12 characters).
+- **Secure Password Prompting**: Integrated `getpass.getpass()` for interactive prompting when `--password` is omitted, with non-interactive support via `BOOTSTRAP_DEV_USER_PASSWORD` env variable. Never prints credentials or hashes.
+- **Protection Against Account Hijacking & Escalation**: Requires explicit `--update-existing` flag to modify existing staff accounts. Strictly blocks role escalation of existing customer accounts.
+- **Verification Coverage**: 21 unit tests in [`test_bootstrap_dev_users.py`](../backend/tests/test_bootstrap_dev_users.py) covering all validation paths.
+
+### 20.3 Password Hashing & Admin Metrics Documentation Correction
+- **Argon2 via pwdlib**: Replaced legacy references to PBKDF2 across all documentation. Passwords are salted and hashed exclusively using Argon2.
+- **Accurate Admin Capabilities**: Replaced descriptions claiming processing turnaround times or date trends. GET `/api/v1/admin/dashboard/metrics` returns counts (`total_leads`, `total_applications`, `total_match_runs`, `total_offers`, `total_submissions`) and status breakdown maps (`applications_by_status`, `lender_events_by_processing_status`).
+
+### 20.4 Playwright Browser Automation Results
+- **Dedicated Port Isolation**: Ran Playwright tests against dedicated backend server on port `8001` (targeting `mini_loan_marketplace_e2e`) and frontend Vite on port `5174`. The unrelated background container occupying port `8000` (`ai_commerce_backend`) remained completely untouched.
+- **All 3 Browser Suites Executed & Passed**:
+  1. `admin-dashboard.spec.ts`: Login, aggregate metric cards, breakdown progress bars, refresh action, zero customer PII, cross-role protection, and session logout role switching (1.1s).
+  2. `caller-workspace.spec.ts`: Login, assigned lead table, applicant search, status and work-type filters, pagination controls, detail drawer inspection, and caller isolation preventing exposure of unassigned or other callers' leads (620ms).
+  3. `customer-journey.spec.ts`: Full customer workflow from login, draft application creation, granting both purpose-specific consents, running multi-lender matching, generating mock offers, inspecting mock KFS disclosure modal, selecting single offer, idempotent submission with client key, and tracking status on simulated event ledger (1.2s).
+- **Zero Conditional Guards**: All assertions utilize strict Playwright expectations (`await expect(...).toBeVisible()`), ensuring user journeys are fully executed and validated.

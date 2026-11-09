@@ -57,7 +57,7 @@ The application strictly defines **three** application user roles:
 
 3. **Admin**:
    - Views aggregate application funnel metrics.
-   - Monitors application processing turnaround times and lender outcomes.
+   - Monitors application status distribution and mock lender webhook event processing statuses.
    - Preserves customer privacy: must **not** receive sensitive customer records (PII) in dashboard responses.
    - Cannot access customer application creation or caller lead workspaces.
 
@@ -202,10 +202,12 @@ Mini_Loan_Marketplace/
    python -m app.db.seed_lender_policies
    ```
 
-3. Bootstrap development caller and admin accounts:
+3. Bootstrap development caller and admin accounts (interactive prompt for password >= 12 chars, or via `BOOTSTRAP_DEV_USER_PASSWORD`):
    ```bash
-   python scripts/bootstrap_dev_users.py --role caller --email dev_caller@example.com --password CallerPassword123! --full-name "Dev Caller"
-   python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --password AdminPassword123! --full-name "Dev Admin"
+   python scripts/bootstrap_dev_users.py --role caller --email dev_caller@example.com --full-name "Dev Caller"
+   python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --full-name "Dev Admin"
+   # To update an existing dev account, add --update-existing:
+   # python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --update-existing
    ```
 
 4. Start the FastAPI development server:
@@ -231,12 +233,12 @@ Mini_Loan_Marketplace/
 
 ## 🧪 Running Tests
 
-- **Backend Full Suite (323 tests)**:
+- **Backend Full Suite (368 tests)**:
   ```bash
   cd backend
   .venv/bin/python -m pytest -v
   ```
-  Runs 311 unit and integration tests plus 12 dedicated E2E customer journey and role isolation tests.
+  Runs all 368 tests: 311 unit and integration tests, 24 strict E2E database safety tests, 21 dev bootstrap tests, and 12 dedicated E2E customer journey and role isolation tests.
 
 - **Dedicated Backend E2E Suite (12 tests)**:
   ```bash
@@ -252,7 +254,14 @@ Mini_Loan_Marketplace/
   ```
   Runs 141 component and workflow tests across 20 test files covering authentication, draft applications, consent auditing, matching, mock offers, KFS dialog, submission tracking, caller leads, and admin dashboard.
 
-- **Frontend Typecheck & Lint**:
+- **Browser End-to-End Automation (Playwright)**:
+  ```bash
+  cd frontend
+  npm run test:e2e
+  ```
+  Runs automated Chromium browser tests covering customer lifecycle, caller workspace, admin metrics, and session logout role switching.
+
+- **Frontend Typecheck, Lint & Production Build**:
   ```bash
   cd frontend
   npm run typecheck
