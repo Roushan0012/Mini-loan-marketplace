@@ -1,10 +1,14 @@
 import { test, expect } from '@playwright/test';
-
-const CALLER_EMAIL = process.env.E2E_CALLER_EMAIL || 'e2e_caller_playwright@example.com';
-const CALLER_PASSWORD = process.env.E2E_CALLER_PASSWORD || 'E2ePlaywrightPassword123!';
+import { validateRoleCredentials } from './credentials';
 
 test.describe('Caller Assigned-Lead Workspace', () => {
   test('Caller Workspace: Scoped Leads, Search, Filters, Detail Drawer, and Role Isolation', async ({ page }) => {
+    // Validate credentials before browser execution
+    const { email: CALLER_EMAIL, password: CALLER_PASSWORD } = validateRoleCredentials(
+      'E2E_CALLER_EMAIL',
+      'E2E_CALLER_PASSWORD',
+      'caller'
+    );
     // 1. Visit Login Page
     await page.goto('/login');
 

@@ -1,12 +1,19 @@
 import { test, expect } from '@playwright/test';
-
-const ADMIN_EMAIL = process.env.E2E_ADMIN_EMAIL || 'e2e_admin_playwright@example.com';
-const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || 'E2ePlaywrightPassword123!';
-const CUSTOMER_EMAIL = process.env.E2E_CUSTOMER_EMAIL || 'e2e_customer_playwright@example.com';
-const CUSTOMER_PASSWORD = process.env.E2E_CUSTOMER_PASSWORD || 'E2ePlaywrightPassword123!';
+import { validateRoleCredentials, validateRolesAreDistinct } from './credentials';
 
 test.describe('Administrator Aggregate Analytics & Monitoring Dashboard', () => {
   test('Admin Dashboard: Metrics loading, status breakdown, refresh, zero-PII, cross-role protection, and session logout', async ({ page }) => {
+    // Validate credentials before browser execution
+    const admin = validateRoleCredentials('E2E_ADMIN_EMAIL', 'E2E_ADMIN_PASSWORD', 'admin');
+    const customer = validateRoleCredentials('E2E_CUSTOMER_EMAIL', 'E2E_CUSTOMER_PASSWORD', 'customer');
+
+    validateRolesAreDistinct([
+      { role: 'admin', credentials: admin },
+      { role: 'customer', credentials: customer },
+    ]);
+
+    const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = admin;
+    const { email: CUSTOMER_EMAIL, password: CUSTOMER_PASSWORD } = customer;
     // 1. Visit Login Page
     await page.goto('/login');
 

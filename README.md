@@ -202,11 +202,16 @@ Mini_Loan_Marketplace/
    python -m app.db.seed_lender_policies
    ```
 
-3. Bootstrap development caller and admin accounts (interactive prompt for password >= 12 chars, or via `BOOTSTRAP_DEV_USER_PASSWORD`):
+3. Bootstrap development caller and admin accounts (prompts securely via `getpass`, or reads `BOOTSTRAP_DEV_USER_PASSWORD`):
    ```bash
+   # Interactive secure prompt (min 12 chars):
    python scripts/bootstrap_dev_users.py --role caller --email dev_caller@example.com --full-name "Dev Caller"
    python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --full-name "Dev Admin"
-   # To update an existing dev account, add --update-existing:
+
+   # Non-interactive using environment variable:
+   # BOOTSTRAP_DEV_USER_PASSWORD="SecurePassword123!" python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com
+
+   # To update an existing dev account, pass --update-existing:
    # python scripts/bootstrap_dev_users.py --role admin --email dev_admin@example.com --update-existing
    ```
 
@@ -255,11 +260,38 @@ Mini_Loan_Marketplace/
   Runs 141 component and workflow tests across 20 test files covering authentication, draft applications, consent auditing, matching, mock offers, KFS dialog, submission tracking, caller leads, and admin dashboard.
 
 - **Browser End-to-End Automation (Playwright)**:
-  ```bash
-  cd frontend
-  npm run test:e2e
-  ```
-  Runs automated Chromium browser tests covering customer lifecycle, caller workspace, admin metrics, and session logout role switching.
+  Playwright tests strictly require dedicated E2E environment credentials and refuse to execute with hardcoded defaults.
+  1. Copy the example configuration template:
+     ```bash
+     cp .env.e2e.example .env.e2e.local
+     ```
+  2. Generate unique test passwords locally (minimum 12 characters):
+     ```bash
+     python3 -c "import secrets; print('E2E_CUSTOMER_PASSWORD=' + secrets.token_urlsafe(16)); print('E2E_CALLER_PASSWORD=' + secrets.token_urlsafe(16)); print('E2E_ADMIN_PASSWORD=' + secrets.token_urlsafe(16))"
+     ```
+     Populate `.env.e2e.local` with distinct emails (must start with `e2e_`) and passwords:
+     ```env
+     E2E_CUSTOMER_EMAIL=e2e_customer_local@example.com
+     E2E_CUSTOMER_PASSWORD=<generated_password_1>
+     E2E_CALLER_EMAIL=e2e_caller_local@example.com
+     E2E_CALLER_PASSWORD=<generated_password_2>
+     E2E_ADMIN_EMAIL=e2e_admin_local@example.com
+     E2E_ADMIN_PASSWORD=<generated_password_3>
+     ```
+  3. Load the variables into your shell environment:
+     ```bash
+     export $(grep -v '^#' .env.e2e.local | xargs)
+     ```
+  4. Seed the dedicated isolated E2E test database (`mini_loan_marketplace_e2e`):
+     ```bash
+     cd backend
+     .venv/bin/python scripts/seed_playwright_e2e_data.py
+     ```
+  5. Run Playwright browser suites:
+     ```bash
+     cd frontend
+     npm run test:e2e
+     ```
 
 - **Frontend Typecheck, Lint & Production Build**:
   ```bash

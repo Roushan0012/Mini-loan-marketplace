@@ -231,3 +231,79 @@ def test_bootstrap_existing_customer_escalation_rejected(
             update_existing=True,
             session=mock_session,
         )
+
+
+def test_cli_rejects_password_flag() -> None:
+    """Verify that --password command line argument is rejected by parser."""
+    import sys
+    from scripts.bootstrap_dev_users import main
+
+    test_args = [
+        "bootstrap_dev_users.py",
+        "--role",
+        "caller",
+        "--email",
+        "test@example.com",
+        "--password",
+        "Password123456!",
+    ]
+    with patch.object(sys, "argv", test_args):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        # argparse raises SystemExit(2) on unrecognized arguments
+        assert exc_info.value.code == 2
+
+
+def test_cli_uses_env_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify CLI reads BOOTSTRAP_DEV_USER_PASSWORD environment variable."""
+    import sys
+    from scripts.bootstrap_dev_users import main
+
+    monkeypatch.setenv("BOOTSTRAP_DEV_USER_PASSWORD", "EnvSecurePassword123!")
+
+    test_args = [
+        "bootstrap_dev_users.py",
+        "--role",
+        "caller",
+        "--email",
+        "caller_env@example.com",
+    ]
+    with patch.object(sys, "argv", test_args):
+        with patch("scripts.bootstrap_dev_users.bootstrap_user") as mock_bootstrap:
+            main()
+            mock_bootstrap.assert_called_once_with(
+                email="caller_env@example.com",
+                password="EnvSecurePassword123!",
+                role="caller",
+                full_name="Dev Caller",
+                update_existing=False,
+            )
+
+
+def test_cli_prompts_getpass_when_no_env_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify CLI prompts via getpass when BOOTSTRAP_DEV_USER_PASSWORD is not set."""
+    import sys
+    from scripts.bootstrap_dev_users import main
+
+    monkeypatch.delenv("BOOTSTRAP_DEV_USER_PASSWORD", raising=False)
+
+    test_args = [
+        "bootstrap_dev_users.py",
+        "--role",
+        "admin",
+        "--email",
+        "admin_prompt@example.com",
+    ]
+    with patch.object(sys, "argv", test_args):
+        with patch("getpass.getpass", return_value="PromptPassword123!") as mock_getpass:
+            with patch("scripts.bootstrap_dev_users.bootstrap_user") as mock_bootstrap:
+                main()
+                mock_getpass.assert_called_once()
+                mock_bootstrap.assert_called_once_with(
+                    email="admin_prompt@example.com",
+                    password="PromptPassword123!",
+                    role="admin",
+                    full_name="Dev Admin",
+                    update_existing=False,
+                )
+

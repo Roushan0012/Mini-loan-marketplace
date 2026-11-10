@@ -1,10 +1,14 @@
 import { test, expect } from '@playwright/test';
-
-const CUSTOMER_EMAIL = process.env.E2E_CUSTOMER_EMAIL || 'e2e_customer_playwright@example.com';
-const CUSTOMER_PASSWORD = process.env.E2E_CUSTOMER_PASSWORD || 'E2ePlaywrightPassword123!';
+import { validateRoleCredentials } from './credentials';
 
 test.describe('Customer End-to-End Application Lifecycle', () => {
   test('Complete Customer Lifecycle: Registration/Login to Terminal Submission Tracking', async ({ page }) => {
+    // Validate credentials before browser execution
+    const { email: CUSTOMER_EMAIL, password: CUSTOMER_PASSWORD } = validateRoleCredentials(
+      'E2E_CUSTOMER_EMAIL',
+      'E2E_CUSTOMER_PASSWORD',
+      'customer'
+    );
     // 1. Visit Login Page
     await page.goto('/login');
     await expect(page).toHaveTitle(/Mini Loan Marketplace/i);

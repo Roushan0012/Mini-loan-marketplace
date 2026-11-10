@@ -356,12 +356,13 @@ Full mapping between capstone requirements and technical deliverables is documen
 | **Frontend TypeScript Typecheck** | All Files | Clean (0 errors) | 0 | ~2.5s | `tsc --noEmit` |
 | **Frontend ESLint Audit** | All Files | Clean (0 warnings) | 0 | ~1.8s | ESLint 9 |
 | **Frontend Production Build** | Vite Build | Success (0 errors) | 0 | ~0.5s | Rollup / Vite (`dist/`) |
-| **Backend Full Pytest Suite** | 368 | 368 (100%) | 0 | ~22.7s | Isolated PostgreSQL Test & E2E DBs |
+| **Backend Full Pytest Suite** | 377 | 377 (100%) | 0 | ~22.7s | Isolated PostgreSQL Test & E2E DBs |
 | **↳ Dedicated Backend E2E (Pytest)** | 12 | 12 (100%) | 0 | ~1.6s | Dedicated E2E DB (`mini_loan_marketplace_e2e`) |
 | **↳ E2E Database Safety Guards** | 24 | 24 (100%) | 0 | ~0.3s | `test_e2e_database_safety.py` |
-| **↳ Dev User Bootstrap Hardening** | 21 | 21 (100%) | 0 | ~0.4s | `test_bootstrap_dev_users.py` |
+| **↳ Dev User Bootstrap Hardening** | 24 | 24 (100%) | 0 | ~0.4s | `test_bootstrap_dev_users.py` |
+| **↳ Playwright Data Seeder Validation** | 6 | 6 (100%) | 0 | ~0.1s | `test_seed_playwright_e2e_data.py` |
 | **Browser E2E Automation (Playwright)** | 3 | 3 (100%) | 0 | ~3.8s | Chromium Headless (`127.0.0.1:5174`) |
-| **Aggregate Automated Verification** | **512** | **512 (100%)** | **0** | **~31s** | **Clean Pass** |
+| **Aggregate Automated Verification** | **521** | **521 (100%)** | **0** | **~31s** | **Clean Pass** |
 
 ---
 
@@ -390,3 +391,29 @@ Full mapping between capstone requirements and technical deliverables is documen
   2. `caller-workspace.spec.ts`: Login, assigned lead table, applicant search, status and work-type filters, pagination controls, detail drawer inspection, and caller isolation preventing exposure of unassigned or other callers' leads (620ms).
   3. `customer-journey.spec.ts`: Full customer workflow from login, draft application creation, granting both purpose-specific consents, running multi-lender matching, generating mock offers, inspecting mock KFS disclosure modal, selecting single offer, idempotent submission with client key, and tracking status on simulated event ledger (1.2s).
 - **Zero Conditional Guards**: All assertions utilize strict Playwright expectations (`await expect(...).toBeVisible()`), ensuring user journeys are fully executed and validated.
+
+---
+
+## 21. Step 14.2 Credential Sanitization Summary
+
+### 21.1 Removal of Committed E2E Credential Defaults
+- **Playwright Test Specs**: Removed all hardcoded test emails and static passwords from [`customer-journey.spec.ts`](../frontend/e2e/customer-journey.spec.ts), [`caller-workspace.spec.ts`](../frontend/e2e/caller-workspace.spec.ts), and [`admin-dashboard.spec.ts`](../frontend/e2e/admin-dashboard.spec.ts).
+- **Fail-Fast Credential Verification**: Implemented [`credentials.ts`](../frontend/e2e/credentials.ts) with `validateRoleCredentials()`, ensuring test suites fail immediately before launching browser sessions if required environment variables are absent.
+- **Leak-Safe Error Reporting**: When an environment variable is missing, errors disclose only the variable name (e.g., `Missing required environment variable: E2E_CUSTOMER_PASSWORD`); credentials and secret values are never printed to terminal or logs.
+- **Credential Hygiene Rules**: Enforces role email prefix validation (`e2e_customer_`, `e2e_caller_`, `e2e_admin_`), minimum 12-character password complexity, and distinct non-overlapping credentials across roles.
+
+### 21.2 Hardened Playwright E2E Data Seeder
+- **Environment & Variable Requirements**: [`seed_playwright_e2e_data.py`](../backend/scripts/seed_playwright_e2e_data.py) requires explicit environment variables (`E2E_CUSTOMER_EMAIL`, `E2E_CUSTOMER_PASSWORD`, `E2E_CALLER_EMAIL`, `E2E_CALLER_PASSWORD`, `E2E_ADMIN_EMAIL`, `E2E_ADMIN_PASSWORD`).
+- **Cryptographic Live Database Verification**: Asserts `current_database()` equals `mini_loan_marketplace_e2e` before executing transactions.
+- **Strict User Mutation Boundary**: User queries and upserts are strictly scoped to `e2e_`-prefixed email addresses. Existing non-E2E records cannot be touched or overwritten.
+- **Elimination of Static Peer Passwords**: The peer caller account used for testing assignment isolation is provisioned with a runtime-generated dynamic secret (`secrets.token_urlsafe(16)`), removing static passwords completely.
+- **Verification Coverage**: 6 dedicated unit tests in [`test_seed_playwright_e2e_data.py`](../backend/tests/test_seed_playwright_e2e_data.py) verifying fail-fast behavior, prefix enforcement, password length validation, and distinct role checks.
+
+### 21.3 Bootstrap CLI Security Hardening
+- **Removal of `--password` Argument**: Removed the `--password` CLI flag from [`bootstrap_dev_users.py`](../backend/scripts/bootstrap_dev_users.py) to prevent plain-text credentials from being recorded in shell history (`~/.bash_history`, `~/.zsh_history`) or process listings (`ps aux`).
+- **Interactive & CI Ingestion**: Passwords are supplied securely via interactive `getpass.getpass()` or via `BOOTSTRAP_DEV_USER_PASSWORD` environment variable, enforcing a minimum of 12 characters.
+
+### 21.4 Environment Configuration & Documentation
+- **Git Protection**: Added `.env.e2e.local` to `.gitignore` while explicitly preserving `.env.e2e.example`.
+- **Zero-Credential Template**: Provided [`.env.e2e.example`](../.env.e2e.example) with empty variable placeholders and clear generation guidance.
+- **Operational Documentation**: Updated [`README.md`](../README.md) with step-by-step local credential setup, password generation commands, environment loading instructions, and the revised bootstrap command syntax.

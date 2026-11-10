@@ -10,6 +10,7 @@ SAFETY REQUIREMENTS:
 - Password minimum: 12 characters (aligned with UserRegisterRequest).
 - Interactive password input via getpass.getpass() by default.
 - Non-interactive password entry via BOOTSTRAP_DEV_USER_PASSWORD env variable.
+- Passwords are never accepted via command-line arguments to prevent shell history exposure.
 - Explicit --update-existing flag required to modify an existing account.
 - Never prints passwords or password hashes.
 """
@@ -152,11 +153,6 @@ def main() -> None:
         help="Email address for the bootstrap account.",
     )
     parser.add_argument(
-        "--password",
-        default=None,
-        help="Password (min 12 chars). If omitted, prompts securely or reads BOOTSTRAP_DEV_USER_PASSWORD.",
-    )
-    parser.add_argument(
         "--full-name",
         default="",
         help="Full display name for the account.",
@@ -169,18 +165,16 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Determine password securely
-    password = args.password
-    if not password:
-        env_password = os.getenv("BOOTSTRAP_DEV_USER_PASSWORD")
-        if env_password and env_password.strip():
-            password = env_password.strip()
-        else:
-            try:
-                password = getpass.getpass("Enter password (minimum 12 characters): ")
-            except (EOFError, KeyboardInterrupt):
-                print("\nPassword prompt cancelled.", file=sys.stderr)
-                sys.exit(1)
+    # Determine password securely (env var or interactive prompt; no CLI argument)
+    env_password = os.getenv("BOOTSTRAP_DEV_USER_PASSWORD")
+    if env_password and env_password.strip():
+        password = env_password.strip()
+    else:
+        try:
+            password = getpass.getpass("Enter password (minimum 12 characters): ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nPassword prompt cancelled.", file=sys.stderr)
+            sys.exit(1)
 
     if not password:
         print("Error: Password cannot be empty.", file=sys.stderr)
